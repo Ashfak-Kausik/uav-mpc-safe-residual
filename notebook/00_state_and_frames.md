@@ -17,21 +17,21 @@ The test we hold ourselves to for "fully describe" is a prediction test: **the s
 Before any state or equation, we fix the convention explicitly. This is not bookkeeping. The quadrotor literature is split roughly evenly between z-up and z-down conventions, and importing a formula written in the other convention produces a sign error that is silent, physically plausible for a few seconds of simulation, and extremely expensive to find. We therefore state our convention here, in entry 00, and every later entry inherits it without restating it.
  
 **World frame (inertial, fixed to the ground), right-handed, z-up:**
-- world x: an arbitrary fixed horizontal direction, taken as "forward" for the purposes of describing reference paths
-- world y: horizontal, completing the right-handed set
-- world z: **up**, away from the ground
+- world x: an arbitrary fixed horizontal direction, taken as "forward" for the purposes of describing reference paths.
+- world y: horizontal, completing the right-handed set.
+- world z: **up**, away from the ground.
 Consequently gravity points along **negative** world z. When entry 02 writes the gravitational force it will appear as a minus sign, and that minus sign traces back to this line.
  
 **Body frame (fixed to the airframe, translating and rotating with it), right-handed, z-up:**
-- body x: forward, out the nose of the drone
-- body y: to the drone's left
-- body z: **up**, out the top of the airframe, which is the direction the propellers push
+- body x: forward, out the nose of the drone.
+- body y: to the drone's left.
+- body z: **up**, out the top of the airframe, which is the direction the propellers push.
 This is the FLU (forward-left-up) body convention paired with an ENU-style (east-north-up) world convention. Thrust is therefore always along **positive** body z. Note that this is *not* the NED / FRD convention used by PX4, ArduPilot, and a large fraction of the aerospace literature, in which z points down and thrust is negative. Any equation or dataset we import from those sources must be converted before use, and we will flag each such conversion where it happens.
  
 **Rotation sense.** All rotations follow the right-hand rule about the body axes. This fixes the positive sense of each angle, which matters as soon as we start reading plots:
-- positive roll: about body x, right wing down
-- positive pitch: about body y, **nose up**
-- positive yaw: about body z, nose to the left (counter-clockwise seen from above)
+- positive roll: about body x, right wing down.
+- positive pitch: about body y, **nose up**.
+- positive yaw: about body z, nose to the left (counter-clockwise seen from above).
 We record these signs now because our later sanity checks depend on them. A forward-accelerating drone is at *negative* pitch in this convention, which is the opposite of the loose everyday phrasing "pitch forward," and confusing the two is exactly the kind of error this section exists to prevent.
  
 **Units.** SI throughout: metres, seconds, kilograms, radians. Angles are radians everywhere internally; degrees appear only in plots and prose.

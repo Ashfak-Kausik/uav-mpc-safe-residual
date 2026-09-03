@@ -16,19 +16,31 @@ A note on why frames matter here: entry 00 ended on the observation that the two
  
 We began by listing every force we could think of acting on a quadrotor in flight, then sorted them into what belongs in the nominal model and what does not.
  
-**Gravity.** Always points along negative world z, and it is naturally a world frame quantity because "down" is defined relative to the ground, not the drone. It is constant. It belongs in the nominal model.
+**Gravity:** Always points along negative world z, and it is naturally a world frame quantity because "down" is defined relative to the ground, not the drone. It is constant. It belongs in the nominal model.
  
-**Thrust.** The four propellers push the drone along its own body z direction, so total thrust always points along positive body z. This is a body frame quantity, and it is the single most important consequence of orientation: when the drone tilts, its thrust tilts with it, so a tilted thrust gains a horizontal component. This is the entire reason a quadrotor can move sideways at all, since it has no way to push sideways directly. Thrust belongs in the nominal model, and the orientation is what we will use to rotate it from the body frame into the world frame so it can be added to gravity.
+**Thrust:** The four propellers push the drone along its own body z direction, so total thrust always points along positive body z. This is a body frame quantity, and it is the single most important consequence of orientation: when the drone tilts, its thrust tilts with it, so a tilted thrust gains a horizontal component. This is the entire reason a quadrotor can move sideways at all, since it has no way to push sideways directly. Thrust belongs in the nominal model, and the orientation is what we will use to rotate it from the body frame into the world frame so it can be added to gravity.
  
-**Body drag (bluff-body air resistance).** Air resistance on the airframe opposes motion through the air, so it points opposite to the velocity. Drag is real and we care about it, but we make a deliberate choice: it does not enter the nominal model. Instead we introduce it later as one of the perturbations we study, so that the nominal model stays clean and the drag becomes part of the mismatch our controller and learned helper must deal with. When we do introduce it we will have to decide whether we model it as quadratic in speed (the honest bluff-body form) or linear (the tractable form), and we will state that choice explicitly at the time rather than letting it default.
+**Body drag (bluff-body air resistance):** Air resistance on the airframe opposes motion through the air, so it points opposite to the velocity. Drag is real and we care about it, but we make a deliberate choice: it does not enter the nominal model. Instead we introduce it later as one of the perturbations we study, so that the nominal model stays clean and the drag becomes part of the mismatch our controller and learned helper must deal with. When we do introduce it we will have to decide whether we model it as quadratic in speed (the honest bluff-body form) or linear (the tractable form), and we will state that choice explicitly at the time rather than letting it default.
  
-**Rotor drag (induced drag from the spinning discs).** We call this one out separately rather than burying it under "higher order effects," for two reasons. First, it is the dominant modelable aerodynamic effect on a quadrotor in forward flight, and it is the canonical target of the learned-residual quadrotor literature, so any reader of this work will expect it by name. Second, its structure matters to our thesis. It is approximately linear in the body-frame velocity, of the form
+**Rotor drag (induced drag from the spinning discs):** We call this one out separately rather than burying it under "higher order effects," for two reasons. First, it is the dominant modelable aerodynamic effect on a quadrotor in forward flight, and it is the canonical target of the learned-residual quadrotor literature, so any reader of this work will expect it by name. Second, its structure matters to our thesis. It is approximately linear in the body-frame velocity, of the form:
  
-$$\mathbf{F}_{\text{rotor drag}} \approx -\mathbf{R}\,\mathbf{D}\,\mathbf{R}^{\top}\mathbf{v}, \qquad \mathbf{D} = \operatorname{diag}(d_x, d_y, d_z)$$
+ $$\mathbf{F}_{\text{rotor drag}} \approx -\mathbf{R}\,\mathbf{D}\,\mathbf{R}^{\top}\mathbf{v}, \qquad \mathbf{D} = \operatorname{diag}(d_x, d_y, d_z)$$
  
-with the lateral coefficients much larger than the vertical one. It therefore acts in the *translational* channel, and the number of differentiations separating it from a body-rate command is exactly the kind of quantity our realizability criterion is built on. Like body drag, it stays out of the nominal model and enters as a perturbation.
+ with the lateral coefficients much larger than the vertical one. It therefore acts in the *translational* channel, and the number of differentiations separating it from a body-rate command is exactly the kind of quantity our realizability criterion is built on. Like body drag, it stays out of the nominal model and enters as a perturbation.
+-
+-**Notation of Rotor Drag Model (for better understanding):**
+-
+-| Symbol | Meaning | Simple meaning |
+-|---|---|---|
+-| $F_{\text{rotor drag}}$ | Rotor-drag force | Aerodynamic force caused by the spinning rotors |
+-| $R$ | Rotation matrix | Describes the drone's orientation relative to the world |
+-| $D$ | Rotor-drag coefficient matrix | Describes how strongly drag acts along each body direction |
+-| $R^\top$ | Transpose of $R$ | Converts a world-frame vector into the body frame |
+-| $v$ | Linear velocity | How fast the drone is moving |
+-| $-$ | Negative sign | Indicates that drag opposes the motion |
+-| $d_x, d_y, d_z$ | Drag coefficients | Strength of drag along body X, Y, and Z directions |
  
-**Higher order aerodynamic effects (blade flapping, ground effect, propeller inflow variation, and similar).** These are real and we acknowledge them, but we deliberately leave them out of the nominal model. They are small, difficult to model precisely, and, importantly, they are exactly the kind of unmodeled mismatch our learned residual exists to capture. In other words, leaving them out is not an oversight; the gap they create is part of what the research is about. We note them here so they are on record, and we let them live in the residual rather than in the analytical model.
+ **Higher order aerodynamic effects (blade flapping, ground effect, propeller inflow variation, and similar):** These are real and we acknowledge them, but we deliberately leave them out of the nominal model. They are small, difficult to model precisely, and, importantly, they are exactly the kind of unmodeled mismatch our learned residual exists to capture. In other words, leaving them out is not an oversight; the gap they create is part of what the research is about. We note them here so they are on record, and we let them live in the residual rather than in the analytical model.
  
 So the nominal force model reduces to two forces: **gravity along negative world z, and total thrust along positive body z.** Body drag and rotor drag are added as perturbations. Flapping, ground effect, and their relatives are left in the gap that the residual learns.
  
@@ -50,9 +62,9 @@ The key insight is that these are two genuinely different mechanisms. Roll and p
  
 Before we can write the map from four motors to a wrench, we need what a single rotor produces. Let $\Omega_i$ be the angular speed of rotor $i$. Two standard relations, both quadratic in speed because both are aerodynamic:
  
-$$f_i = k_f\,\Omega_i^2, \qquad \tau_{\text{react},i} = k_m\,\Omega_i^2 = \frac{k_m}{k_f}\,f_i = c_{\tau f}\,f_i$$
+ $$f_i = k_f\,\Omega_i^2, \qquad \tau_{\text{react},i} = k_m\,\Omega_i^2 = \frac{k_m}{k_f}\,f_i = c_{\tau f}\,f_i$$
  
-The first is the thrust the rotor produces along body z. The second is the reaction torque it exerts on the airframe about body z, opposite in sense to its own spin. The important consequence is the last equality: **the reaction torque is proportional to the thrust**, with a single constant $c_{\tau f} = k_m / k_f$ that has units of length. That is the fair comparison against arm length, and it is a brutal one. For a typical airframe $c_{\tau f}$ is of order 0.01 m while the arm length $l$ is of order 0.15 m, roughly a factor of fifteen. This is the quantitative version of the qualitative claim above: yaw authority is not merely "weaker," it is smaller by more than an order of magnitude per unit of thrust asymmetry, and we should expect any correction demanding fast yaw to be far closer to unrealizable than the same correction demanding roll or pitch.
+ The first is the thrust the rotor produces along body z. The second is the reaction torque it exerts on the airframe about body z, opposite in sense to its own spin. The important consequence is the last equality: **the reaction torque is proportional to the thrust**, with a single constant $c_{\tau f} = k_m / k_f$ that has units of length. That is the fair comparison against arm length, and it is a brutal one. For a typical airframe $c_{\tau f}$ is of order 0.01 m while the arm length $l$ is of order 0.15 m, roughly a factor of fifteen. This is the quantitative version of the qualitative claim above: yaw authority is not merely "weaker," it is smaller by more than an order of magnitude per unit of thrust asymmetry, and we should expect any correction demanding fast yaw to be far closer to unrealizable than the same correction demanding roll or pitch.
  
 We treat $f_i$, not $\Omega_i$, as the control input throughout, since the map between them is a fixed monotone square root and carrying $\Omega_i$ adds nothing at this stage. When we add motor lag in the perturbation phase we will have to decide whether the first-order lag acts on $f_i$ or on $\Omega_i$, because those are not the same model, and we will state that choice explicitly then.
  
