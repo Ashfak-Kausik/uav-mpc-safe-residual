@@ -26,7 +26,7 @@ We began by listing every force we could think of acting on a quadrotor in fligh
  
  $$\mathbf{F}_{\text{rotor drag}} \approx -\mathbf{R}\,\mathbf{D}\,\mathbf{R}^{\top}\mathbf{v}, \qquad \mathbf{D} = \operatorname{diag}(d_x, d_y, d_z)$$
  
- with the lateral coefficients much larger than the vertical one. It therefore acts in the *translational* channel, and the number of differentiations separating it from a body-rate command is exactly the kind of quantity our realizability criterion is built on. Like body drag, it stays out of the nominal model and enters as a perturbation.
+with the lateral coefficients much larger than the vertical one. It therefore acts in the *translational* channel, and the number of differentiations separating it from a body-rate command is exactly the kind of quantity our realizability criterion is built on. Like body drag, it stays out of the nominal model and enters as a perturbation.
 -
 -**Notation of Rotor Drag Model (for better understanding):**
 -
@@ -65,6 +65,17 @@ Before we can write the map from four motors to a wrench, we need what a single 
  $$f_i = k_f\,\Omega_i^2, \qquad \tau_{\text{react},i} = k_m\,\Omega_i^2 = \frac{k_m}{k_f}\,f_i = c_{\tau f}\,f_i$$
  
  The first is the thrust the rotor produces along body z. The second is the reaction torque it exerts on the airframe about body z, opposite in sense to its own spin. The important consequence is the last equality: **the reaction torque is proportional to the thrust**, with a single constant $c_{\tau f} = k_m / k_f$ that has units of length. That is the fair comparison against arm length, and it is a brutal one. For a typical airframe $c_{\tau f}$ is of order 0.01 m while the arm length $l$ is of order 0.15 m, roughly a factor of fifteen. This is the quantitative version of the qualitative claim above: yaw authority is not merely "weaker," it is smaller by more than an order of magnitude per unit of thrust asymmetry, and we should expect any correction demanding fast yaw to be far closer to unrealizable than the same correction demanding roll or pitch.
+
+**Notation (rotor model):**
+
+| Symbol | Meaning | Simple meaning |
+|---|---|---|
+| $\Omega_i$ | Rotor angular speed | Angular velocity of rotor $i$ (rad/s) |
+| $f_i$ | Rotor thrust | Force produced by rotor $i$ along body $z$ (N) |
+| $\tau_{\text{react},i}$ | Reaction torque | Aerodynamic reaction torque on the body from rotor $i$ (N·m) |
+| $k_f$ | Thrust coefficient | Proportionality constant mapping $\Omega^2$ to thrust |
+| $k_m$ | Moment coefficient | Proportionality constant mapping $\Omega^2$ to reaction torque |
+| $c_{\tau f}$ | Thrust-to-torque constant | Ratio $k_m/k_f$, reaction torque per unit thrust (m) |
  
 We treat $f_i$, not $\Omega_i$, as the control input throughout, since the map between them is a fixed monotone square root and carrying $\Omega_i$ adds nothing at this stage. When we add motor lag in the perturbation phase we will have to decide whether the first-order lag acts on $f_i$ or on $\Omega_i$, because those are not the same model, and we will state that choice explicitly then.
  
@@ -79,6 +90,144 @@ With arm length $l$ measured from the centre of mass to each rotor, define
 $$a \;=\; \frac{l}{\sqrt{2}}$$
  
 which is the effective moment arm of each rotor about the body x and y axes. Note immediately that $a < l$: the X configuration trades some per-axis leverage for the fact that all four rotors contribute. Using $l$ where $a$ belongs overstates roll and pitch authority by 41 percent, which would silently corrupt every realizability computation downstream.
+
+### Rotor positions and spin directions
+
+We use the **X configuration**, so all four rotors are placed diagonally relative to the body \(x\) and \(y\) axes. We define the arm length \(l\) as the distance from the centre of mass to each rotor. Since each rotor lies at \(45^\circ\) to both body axes, its \(x\)- and \(y\)-coordinates have the same magnitude. We therefore define
+
+$$
+a=\frac{l}{\sqrt{2}}.
+$$
+
+Here, \(a\) is the effective moment arm of each rotor about the body \(x\) and \(y\) axes.
+
+We describe each rotor position using the body frame. With our convention of \(+x\) forward and \(+y\) to the left, the four rotor positions are
+
+$$
+\mathbf r_1=(+a,+a,0),
+$$
+
+$$
+\mathbf r_2=(-a,+a,0),
+$$
+
+$$
+\mathbf r_3=(-a,-a,0),
+$$
+
+$$
+\mathbf r_4=(+a,-a,0).
+$$
+
+Thus, rotor 1 is front-left, rotor 2 is back-left, rotor 3 is back-right, and rotor 4 is front-right.
+
+The important point is that every rotor has both a nonzero \(x\)-coordinate and a nonzero \(y\)-coordinate. Therefore, every rotor can contribute to **both roll and pitch torque**. This differs from a plus configuration, where the rotors lie directly on the body axes and only two rotors have a moment arm about each axis.
+
+### From rotor position to roll and pitch torque
+
+For each rotor, the thrust force acts along the body \(+z\) direction. We therefore write the thrust force as
+
+$$
+\mathbf f_i=f_i\mathbf e_3
+=
+\begin{bmatrix}
+0\\
+0\\
+f_i
+\end{bmatrix}.
+$$
+
+The torque produced by this force about the centre of mass is
+
+$$
+\boldsymbol{\tau}_{i}
+=
+\mathbf r_i\times\mathbf f_i.
+$$
+
+For a general rotor position
+
+$$
+\mathbf r_i=
+\begin{bmatrix}
+x_i\\
+y_i\\
+0
+\end{bmatrix},
+$$
+
+the cross product gives
+
+$$
+\boldsymbol{\tau}_{i}
+=
+\begin{bmatrix}
+x_i\\
+y_i\\
+0
+\end{bmatrix}
+\times
+\begin{bmatrix}
+0\\
+0\\
+f_i
+\end{bmatrix}
+=
+\begin{bmatrix}
+y_i f_i\\
+-x_i f_i\\
+0
+\end{bmatrix}.
+$$
+
+Therefore,
+
+$$
+\boxed{\tau_{x,i}=y_i f_i}
+$$
+
+and
+
+$$
+\boxed{\tau_{y,i}=-x_i f_i}.
+$$
+
+This gives us a direct physical interpretation: the rotor's \(y\)-position determines its contribution to **roll torque**, while its \(x\)-position determines its contribution to **pitch torque**. Because the rotors in our X configuration have \(x_i,y_i=\pm a\), each rotor contributes to both axes.
+
+For example:
+
+$$
+\mathbf r_1=(+a,+a,0), \quad \text{(rotor 1 is front-left)}
+$$
+
+$$
+\mathbf r_2=(-a,+a,0), \quad \text{(rotor 2 is back-left)}
+$$
+
+$$
+\mathbf r_3=(-a,-a,0), \quad \text{(rotor 3 is back-right)}
+$$
+
+$$
+\mathbf r_4=(+a,-a,0), \quad \text{(rotor 4 is front-right)}
+$$
+
+For rotor 1 at $(+a,+a,0)$, its thrust produces
+
+$$
+\boldsymbol{\tau}_1
+=
+\begin{bmatrix}
++a f_1\\
+-a f_1\\
+0
+\end{bmatrix}.
+$$
+
+Thus rotor 1 contributes \(+af_1\) to roll and \(-af_1\) to pitch.
+
+Applying the same calculation to all four rotors gives the roll and pitch contributions that we will use in the full motor-to-wrench map.
+
  
 The four rotors, numbered and with spin directions assigned so that adjacent rotors counter-rotate:
  
