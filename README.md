@@ -1,154 +1,291 @@
-# Safe Learning-Augmented Model Predictive Control for Quadrotor UAVs
+# How Much to Trust a Learned Model
 
-A clean-room research project on **when a controller should trust a learned correction**. We study quadrotor trajectory tracking under model mismatch, where a nominal model predictive controller (MPC) is augmented by a learned residual correction, and we build a run-time **supervisor** that decides, moment by moment, how much of that learned correction to apply, with a guaranteed fallback to the nominal controller. The learned component is allowed to improve tracking when it is trustworthy, but it can never destabilise the loop.
+**Safe Adaptive Dynamic Programming for Supervising Residual-Augmented Quadrotor MPC**
 
-This repository is built from first principles. The nonlinear dynamics, the MPC, the learned residual, and the supervisor are each derived and validated independently, with a derivation notebook recording the reasoning behind every modelling choice.
+> **Status:** Phase 1 of 8 complete (first-principles dynamics). No controller, network, or supervisor code exists yet. See [Roadmap](#8-roadmap-and-status).
 
----
+A learned residual model can make a quadrotor model predictive controller (MPC) better, leave it unchanged, or make it worse. This project asks **how much of a learned correction the controller should use at each moment**, and whether that decision can itself be learned without ever making the controller worse than its nominal design.
 
-## 1. Summary
+The answer proposed here is a two-layer supervisor. An analytic **hard layer** computes an upper bound on trust in closed form. Inside that bound, a learned **soft layer**, trained by adaptive dynamic programming (ADP), chooses the trust level. The nominal MPC is never modified, and zero trust reproduces it exactly.
 
-Model predictive control is a standard tool for quadrotor trajectory tracking because it plans over a finite horizon while respecting actuator limits. Its accuracy, however, depends on how well its internal model matches the real vehicle, and the two rarely match exactly. Mass changes, aerodynamic drag, motor lag, and sensing or actuation delay all push the plant away from the nominal model and degrade tracking.
-
-A common remedy is to learn the residual between the nominal prediction and the observed motion and feed it back into the controller. In practice, applying such a learned correction unconditionally is not safe: depending on the type of mismatch and on where the correction is injected, the same accurate residual can improve tracking, have no useful effect, or actively destabilise the closed loop.
-
-This project treats that observation as the central research problem. We make the decision explicit: a supervisory layer scales the learned correction by a continuous factor between zero and one, based on whether the correction is physically realisable within the control horizon and whether it is trustworthy and safe to apply. When either condition is threatened, the supervisor shrinks the correction to zero and the system reverts to the unmodified nominal MPC. The nominal controller is never changed; the learned correction only ever modifies an external reference supplied to it.
+The full method, equations, and analysis plan are in the research proposal: [`docs/Research_Proposal.pdf`](docs/Research_Proposal.pdf). This README is the summary.
 
 ---
 
-## 2. Problem statement
+## 1. Motivation
 
-Learned residual corrections are widely added to quadrotor MPC to compensate for model mismatch, and are usually reported to help. There is, however, no principled and checkable way to predict, before deployment, whether a given learned correction will help, do nothing, or harm the closed loop, and no run-time mechanism that lets the learned correction improve the controller while guaranteeing it cannot break it.
+MPC is the standard tool for quadrotor trajectory tracking because it plans over a horizon while respecting actuator limits [1]. Its accuracy depends on its internal model, and mass change, rotor drag, motor lag, and actuation delay all cause mismatch. Learned residual models are the common remedy [5], [6], [7].
 
-Our prior empirical work indicated that the deciding factor is not the accuracy of the learned model but the structural relationship between what the correction predicts and what the controller can physically act on within the available horizon and actuator limits. A correction can be accurately predicted, and the vehicle can be fully controllable, yet the correction can still be unrealisable at a given injection point over a short horizon. This project formalises that relationship and builds a supervisory controller around it.
+Our earlier study, presented at IEEE iCONEECT 2026 [19] ([code](https://github.com/Ashfak-Kausik/uav-mpc-learning)), injected a learned residual as a feedforward term into a quadrotor MPC in MuJoCo. The same accurate residual:
 
----
+- **helped** under some mismatches,
+- **did nothing** under others,
+- **degraded tracking** under motor lag and delay near the stability boundary.
 
-## 3. Related work and research gap
-
-The project sits at the intersection of learning-augmented MPC, uncertainty-aware control, and safe learning-based control with guarantees. The table below summarises representative prior work, what each contributes, and the gap it leaves open relative to our problem.
-
-| # | Representative work | What it does | Main contribution | Gap relative to this project |
-|---|---------------------|--------------|-------------------|------------------------------|
-| 1 | Torrente et al., Data-driven MPC for quadrotors [1] | Learns a Gaussian-process residual and embeds it inside the MPC optimisation | Shows learned residuals inside the optimiser improve agile tracking | The correction is applied unconditionally; no run-time decision on when it should or should not be trusted |
-| 2 | Salzmann et al., Real-time neural MPC [2] | Integrates neural network dynamics into MPC and solves it in real time | Makes neural-augmented MPC real-time feasible on hardware | Assumes the learned term is beneficial; does not study regimes where it fails or a fallback |
-| 3 | Saviolo and Loianno, Learning quadrotor dynamics [3] | Surveys and develops learned dynamics models for precise, safe, agile flight | Consolidates learned-dynamics approaches for quadrotors | Focuses on model accuracy, not on whether a learned correction is realisable or safe to apply |
-| 4 | Hewing et al., Cautious MPC using Gaussian process regression [4] | Propagates model uncertainty into the MPC constraints | Uncertainty-aware, cautious control under learned model error | Uncertainty tightens constraints but does not gate a residual by realisability or provide a scalable fallback |
-| 5 | Hewing et al., Learning-based MPC: toward safe learning in control [5] | Reviews learning-based MPC and safe-learning formulations | Frames the field and its safety considerations | A survey framing; no specific realisability criterion or supervisory architecture |
-| 6 | Brunke et al., Safe learning in robotics [6] | Reviews safe learning from learning-based control to safe RL | Maps the safe-learning landscape and its guarantees | Positions the area; does not provide a run-time trust decision for learned corrections |
-| 7 | Shi et al., Neural Lander [7] | Learns ground-effect residual dynamics for stable drone landing | Demonstrates learned residual with closed-loop stability | Residual is always active in its regime; no graded, realisability-aware supervision |
-| 8 | Dawson et al., Safe control with learned certificates [8] | Surveys neural Lyapunov, barrier, and contraction certificates | Toolbox for attaching guarantees to learned controllers | Certifies controllers, not a supervisory layer that decides when to trust a learned residual |
-| 9 | Faessler et al., Differential flatness subject to rotor drag [9] | Models rotor drag and uses flatness for accurate high-speed tracking | Canonical treatment of the dominant modellable aerodynamic mismatch | Compensates a specific effect; does not generalise to deciding realisability across mismatch types |
-| 10 | Garone et al., Reference and command governors [10] | Shrinks a reference to maintain constraint feasibility | Mature theory for safely modifying references online | Shrinks toward a known-safe steady reference for feasibility, not a learned correction scaled by realisability and uncertainty |
-
-**Gap we address (in general terms).** Prior work either applies the learned correction unconditionally, or treats uncertainty and safety at the level of the nominal controller, or supplies certificates for controllers rather than for the decision to trust a learned residual. What is missing is a supervisory layer that decides, at run time, whether a learned residual is both **realisable** within the control horizon under real actuator limits and **safe and trustworthy** to apply, scales it accordingly, and falls back to the nominal controller before harm can occur. Filling this gap is the purpose of the project.
+That study established the pattern but did not explain it. This repository is a clean-room rebuild that aims to explain it and to build a controller around the explanation. The earlier repository is treated as a frozen artifact: it is reproduced later as a check and never copied.
 
 ---
 
-## 4. Objectives
+## 2. Research questions
 
-1. Derive, from first principles, a complete and validated nonlinear quadrotor model, and build a nominal MPC whose every term can be justified against the vehicle's measured timescales and authority.
-2. Characterise how the nominal controller degrades under the four studied mismatches (mass, drag, motor lag, delay) and their combinations, recording qualitative predictions before running the experiments.
-3. Define precisely what quantity the learned residual predicts and why predicting it should help control, and build a residual network that also reports a calibrated uncertainty estimate.
-4. Formalise a **finite-horizon correction realisability** criterion: whether a requested correction can be produced within the control horizon, at the chosen injection point, under true actuator magnitude and rate limits.
-5. Build a two-layer supervisor that scales the learned correction by a continuous factor, combining a hard safety envelope with a soft performance layer, and that reverts to the nominal controller when safety or realisability is threatened.
-6. Validate the full system in high-fidelity simulation across rich trajectories and multiple vehicles, and show that the supervisor preserves beneficial correction while removing harmful correction.
+| # | Question | Hypothesis |
+|---|----------|------------|
+| RQ1 | Does the harm survive a safer injection point? | When the correction only shifts the reference of the MPC, it can no longer bypass actuator constraints. Degradation should largely disappear, except when the shifted reference demands more input than the vehicle can deliver within the horizon (expected mainly under motor lag and delay). |
+| RQ2 | Is realizability a better predictor than accuracy? | A closed-form realizability ratio separates helpful from harmful corrections across mismatch types better than ensemble variance does, measured as classification AUC over the regime map. |
+| RQ3 | Can ADP learn the trust policy? | A learned soft layer achieves lower tracking cost than both the nominal controller and the best fixed trust level, with one policy across all mismatch types and no per-mismatch tuning. |
+| RQ4 | What can be guaranteed? | Recursive feasibility and bounded tracking for any soft policy, and non-degradation relative to the nominal controller for the learned one. |
 
----
-
-## 5. Possible contributions
-
-- **C1.** An explicit, computable, injection-point-aware notion of finite-horizon correction realisability that distinguishes model accuracy, controllability, realisability, and effective injection, and that predicts whether a given mismatch is correctable.
-- **C2.** A two-layer run-time supervisor (hard safety envelope and soft performance layer) that scales a learned residual continuously and guarantees reversion to the unmodified nominal MPC, so the learned component can help but cannot break the controller.
-- **C3.** A first-principles empirical study across rich trajectories and multiple vehicles demonstrating the criterion and the supervisor, including a regime map (supervised versus unsupervised), an adversarial stress test, and cross-vehicle generalisation with normalised thresholds.
-
-These may be refined as experiments land; predictions recorded before experiments are treated as pre-registered and are revised only with evidence.
+If the degradation in RQ1 vanishes entirely, the role of the supervisor shifts from safety to performance. The method is unchanged in either case.
 
 ---
 
-## 6. Roadmap
+## 3. Method at a glance
 
-The project is built in dependency order. Each phase has an understanding gate (the reasoning can be explained in plain language) and a validation gate (a concrete check passes) before the next phase begins.
+```mermaid
+flowchart LR
+  R["Reference"] --> S(("+"))
+  S -->|"shaped reference"| M["Nominal MPC (unchanged)"]
+  M -->|"input"| P["Quadrotor plant"]
+  P -->|"state"| E["Residual ensemble: mismatch estimate, variance, reference shift"]
+  M -->|"predicted inputs"| H["Hard layer (analytic): upper bound on trust"]
+  E --> H
+  H -->|"bound"| A["Soft layer (ADP): actor and critic"]
+  P -->|"tracking error"| A
+  A -->|"trust scale"| X(("x"))
+  E -->|"shift"| X
+  X --> S
+```
 
-| Phase | Focus | Key deliverables | Horizon |
-|-------|-------|------------------|---------|
-| A | Mathematical foundation | Rigid-body dynamics and frames, 13-state model, actuator mixer and constraint polytope, finite-horizon realisability criterion | In progress |
-| B | Nominal MPC | MPC built from the derived model; validation on hover, line, circle, figure-eight; mismatch characterisation (mass, drag, lag, delay) | Planned |
-| C | Learned residual | Definition of the learned quantity; residual network with ensemble-based uncertainty; oracle test before trusting the network; training with clean holdouts; integration via reference shaping | Planned |
-| D | Safety supervisor and theory | Realisability veto and uncertainty gating; barrier and Lyapunov based safety envelope; two-layer scaling with run-time-assurance fallback; do-no-harm guarantee; supervisor calibration | Planned |
-| E | Simulation validation | Regime map (supervised versus unsupervised); adversarial stress rollout; cross-vehicle generalisation; criterion ablations | Planned |
-| F | Sim-to-real deployment | System identification of a physical quadrotor; on-board deployment of MPC, residual, and supervisor; indoor then outdoor flight tests; sim-to-real gap analysis | Future direction |
-| G | Multi-agent extension | A fleet of supervised UAVs; distributed and learning-based cooperative correction; cooperative safety and fault tolerance | Future direction |
+**Reference shaping.** A deep ensemble [15] predicts the model mismatch and its variance, and the prediction is mapped to a saturated reference shift. The MPC receives a shaped reference:
 
-Phases A to E constitute the core study. Phases F and G are planned future directions that extend the validated framework to hardware and to cooperative multi-vehicle settings.
+```math
+\tilde{r}_k = r_k + \alpha_k \, \Delta r_k, \qquad \alpha_k \in [0, \bar{\alpha}_k]
+```
+
+Here $\alpha_k$ is the trust scale and $\bar{\alpha}_k$ is its upper bound. With $\alpha_k = 0$ the system is exactly the nominal baseline.
+
+**Hard layer (analytic, no second optimization).** Three closed-form bounds are combined:
+
+```math
+\bar{\alpha}_k = \min\left( r_H, \; \psi_k, \; \alpha_{\mathrm{cbf},k} \right)
+```
+
+| Bound | Meaning | How it is computed |
+|-------|---------|--------------------|
+| $r_H$ | Realizability ratio: the largest fraction of the requested correction that the rotors can absorb over the horizon, under thrust and rate limits | A ratio test on the predicted inputs the MPC already returns, using input sensitivities linearized about hover. A minimum of $O(Nm)$ divisions, no solver |
+| $\psi_k$ | Uncertainty gate | Ensemble variance clipped between two calibration thresholds. Treated as necessary, not sufficient, for trust |
+| $\alpha_{\mathrm{cbf},k}$ | Barrier bound | Discrete-time control barrier condition [20] on tilt and altitude limits, using high-order constructions [11], [12] for the lateral channel |
+
+**Soft layer (learned).** The trust decision is posed as an optimal control problem with a five-dimensional state and one action:
+
+```math
+s_k = \left( r_H, \; \psi_k, \; \|e_k\|, \; \|e_k\| - \|e_{k-1}\|, \; \alpha_{k-1} \right)
+```
+
+```math
+\alpha_k = \Pi_{[0, \bar{\alpha}_k]}\left( \alpha_{k-1} + a_k \right), \qquad
+J^{\pi}(s_0) = \sum_{k \ge 0} \gamma^k \left( e_k^{\top} Q \, e_k + \lambda a_k^2 \right)
+```
+
+The action is a bounded increment of trust. The hard layer can cut trust immediately, while increases are rate limited. The policy is trained with action-dependent heuristic dynamic programming [13], an actor and critic scheme, by policy iteration on simulated rollouts across mismatch types and magnitudes.
+
+**Why the nominal controller is the starting point.** Policy iteration needs an admissible initial policy [14]. Here one exists by construction: the policy that keeps trust at zero is the nominal MPC. Starting from it ties every later iterate to the baseline it must not underperform.
 
 ---
 
-## 7. Repository structure
+## 4. Theoretical targets
+
+**Assumption.** The nominal controller is an MPC-for-tracking design [16]: recursively feasible for any reference change, and input-to-state stable with respect to the rate of variation of its reference.
+
+**Target Result 1: safety for any soft policy.** For any trust level inside the hard bound, the closed loop stays recursively feasible, the barrier condition is preserved to first order, and the tracking error is ultimately bounded. This holds regardless of what the learning component does, so the soft layer can be trained without compromising safety.
+
+**Target Result 2: non-degradation of the learned supervisor.** With exact policy evaluation, policy iteration from the nominal policy never increases cost. With a bounded critic error, the learned policy is no worse than the nominal controller up to a term that scales with that error. This is the principal theoretical challenge, because the admissible action set is state dependent and the critic is approximate.
+
+These are targets, not established results.
+
+---
+
+## 5. Evaluation plan
+
+**Setup.** Quadrotor in MuJoCo; MPC-for-tracking in CasADi with IPOPT; hover, circle, and figure-eight trajectories; a second vehicle with different inertial properties for cross-vehicle generalization.
+
+**Mismatches.** Mass, rotor drag, motor lag, and actuation delay, individually and in combination.
+
+**Baselines.**
+
+| # | Baseline | Purpose |
+|---|----------|---------|
+| 1 | Nominal MPC (trust fixed at 0) | The controller that must not be underperformed |
+| 2 | Unsupervised residual (trust fixed at 1) | The correction with no supervision |
+| 3 | Best fixed trust level | Tests whether a learned, time-varying policy is needed |
+| 4 | Hard layer with a threshold rule, no learning | Isolates the contribution of the ADP soft layer |
+| 5 | Predictive safety filter [9] | Optimization-based safety layer |
+| 6 | Reference governor [17] | Classical reference-scaling approach |
+
+**Metrics.** RMS and peak tracking error, fraction of time in actuator saturation, number of constraint violations, per-step supervisor computation time on a CPU, and AUC of $r_H$ versus ensemble variance for classifying helpful and harmful corrections.
+
+**Stress tests.** (1) Mismatch introduced during flight. (2) A deliberately corrupted residual network. Both check that the supervisor reverts to the nominal controller.
+
+---
+
+## 6. Predictions recorded before any experiment
+
+Notebook entry 04 classifies the four mismatches from an equilibrium analysis alone. These are recorded now so that experiments can confirm or refute them.
+
+| Mismatch | Moves the hover equilibrium? | Channel | Predicted effect of an uncorrected residual |
+|----------|------------------------------|---------|---------------------------------------------|
+| Mass | Yes, a constant bias | Vertical (two integrators) | Helps |
+| Drag | No, but breaks constant-velocity trim | Lateral, state dependent | Little change |
+| Motor lag | No, it removes phase margin | Lateral (four integrators) | Hurts past a threshold |
+| Delay | No, it removes phase margin faster | Lateral (four integrators) | Hurts, with an earlier threshold |
+
+If the experiments contradict this table, the table changes and the reason is investigated.
+
+---
+
+## 7. Related work
+
+| Line of work | Representative papers | What it leaves open |
+|--------------|-----------------------|---------------------|
+| Learning-based MPC with guarantees | Aswani et al. [2], Bouffard et al. [3] | The learned term is used whenever it is available |
+| Learned residuals for agile flight | Torrente et al. [5], Salzmann et al. [6], Saviolo and Loianno [7] | Improve model accuracy and apply the learned term unconditionally |
+| Uncertainty-aware MPC | Hewing et al. [8], Koller et al. [4] | Tighten constraints; do not decide how much of a correction is worth using |
+| Safety filters and governors | Wabersich and Zeilinger [9], Garone et al. [17], Ames et al. [20], Sha [21] | Decide whether an action is safe, often with an online optimization; binary or conservative by design |
+| ADP and safe reinforcement learning | Lewis and Vrabie [13], Liu and Wei [14], Berkenkamp et al. [10], Zhang et al. [11], Wang et al. [12] | Learn the control policy itself, not the trust policy between a nominal controller and a learned model |
+
+**Gap addressed.** To our knowledge, no existing method (i) bounds the use of a learned residual by a solver-free measure of whether the actuators can realize it, and (ii) learns, inside that bound, a trust policy with a non-degradation guarantee relative to the nominal controller.
+
+---
+
+## 8. Roadmap and status
+
+Each phase has an understanding gate (the reasoning can be explained in plain language) and a validation gate (a concrete check passes).
+
+| Phase | Focus | Answers | Status |
+|-------|-------|---------|--------|
+| 1 | Quadrotor dynamics from first principles: frames, 13-state model, mixer, constraint polytope, hover equilibrium, linearization | | **Done** (notebook 00 to 04) |
+| 2 | Simulator interface; command and response validation against the derived equations | | Next |
+| 3 | MPC-for-tracking, built term by term; validation on hover, line, circle, figure-eight | | Planned |
+| 4 | Mismatch characterization; reference-level injection of an oracle correction | RQ1 | Planned |
+| 5 | Residual ensemble with uncertainty; reference-shift mapping; trajectory-level holdouts | | Planned |
+| 6 | Hard layer: realizability ratio, uncertainty gate, barrier bound; regime map | RQ2 | Planned |
+| 7 | ADP soft layer by policy iteration from the nominal policy; Target Result 1 | RQ3, RQ4 | Planned |
+| 8 | Target Result 2; cross-vehicle validation; stress tests | RQ4 | Planned |
+
+Phases 1 to 4 correspond to the first semester of the proposal, 5 and 6 to the second (conference paper), 7 to the third, and 8 to the fourth (journal submission).
+
+**Future directions.** On-board hardware deployment, for which the closed-form hard layer is designed, and a distributed trust policy for formations, posed as a cooperative optimal control problem on graphs [18].
+
+---
+
+## 9. Repository structure
+
+Current:
+
+```
 uav-mpc-safe-residual/
-notebook/ Derivation notebook: dynamics, forces and torques, equations of motion,
-actuator model, equilibrium and realisability, each entry recording the
-reasoning behind every modelling choice
-src/ Dynamics, simulator interface, MPC, reference shaping, perturbations,
-realisability primitive, residual network, supervisor, experiment harness
-configs/ One configuration file per reproducible run
-experiments/ Sweep specifications (regime map, oracle tests, stress rollouts)
-tests/ Unit and property-based tests (dynamics conservation laws, supervisor invariants)
-README.md This file
+├── README.md
+├── docs/
+│   └── Research_Proposal.pdf
+└── notebook/
+    ├── 00_state_and_frames.md
+    ├── 01_forces_and_torques.md
+    ├── 02_translational_dynamics.md
+    ├── 03_rotational_dynamics.md
+    └── 04_hover_equilibrium.md
+```
 
+Planned, added as each phase begins:
 
----
-
-## 8. Status
-
-The project is in **Phase A**. The full rigid-body equations of motion have been derived and recorded in the notebook, and the actuator model, constraint polytope, and finite-horizon realisability criterion are being formalised. No controller, network, or supervisor code has been written yet; the discipline of the rebuild is to derive and understand each layer before implementing it, and to validate the physics before building control on top of it.
-
----
-
-## 9. Tooling
-
-Python, with PyTorch for the learned components, CasADi and IPOPT for optimisation-based control, and MuJoCo for simulation. All runs are deterministic (seeded) and carry provenance (configuration plus commit hash) so that any result can be traced to the code that produced it. The project is CPU-only at this stage.
+```
+src/           dynamics, simulator interface, MPC, reference shaping, perturbations,
+               realizability, residual ensemble, supervisor (hard and soft layers), harness
+configs/       one configuration file per reproducible run
+experiments/   sweep specifications (regime map, oracle tests, stress tests)
+tests/         unit and property tests (conservation laws, supervisor invariants)
+```
 
 ---
 
-## 10. References
+## 10. Working principles
 
-[1] G. Torrente, E. Kaufmann, P. Foehn, and D. Scaramuzza, "Data-Driven MPC for Quadrotors," *IEEE Robotics and Automation Letters*, vol. 6, no. 2, 2021.
+1. **Explain before proceeding.** No equation, signal, or ordering dependency is used until it can be explained in plain language.
+2. **Oracle before network.** A perfect correction is tested through the injection pathway before any model is trained to produce it.
+3. **The nominal MPC is never modified.** The learned correction only changes the reference. Zero trust must reproduce the nominal controller exactly, and this is unit tested.
+4. **Predictions before experiments.** Qualitative predictions are written down before each experiment is run.
+5. **Reproducibility.** CPU only, fully seeded, and every result traceable to a configuration file and a commit hash.
 
-[2] T. Salzmann, E. Kaufmann, J. Arrizabalaga, M. Pavone, D. Scaramuzza, and M. Ryll, "Real-Time Neural MPC: Deep Learning Model Predictive Control for Quadrotors and Agile Robotic Platforms," *IEEE Robotics and Automation Letters*, vol. 8, no. 4, 2023.
+---
 
-[3] A. Saviolo and G. Loianno, "Learning Quadrotor Dynamics for Precise, Safe, and Agile Flight Control," *Annual Reviews in Control*, vol. 55, 2023.
+## 11. Open questions
 
-[4] L. Hewing, J. Kabzan, and M. N. Zeilinger, "Cautious Model Predictive Control Using Gaussian Process Regression," *IEEE Transactions on Control Systems Technology*, vol. 28, no. 6, 2020.
+These are tracked here so that they are settled by evidence and not by assumption.
 
-[5] L. Hewing, K. P. Wabersich, M. Menner, and M. N. Zeilinger, "Learning-Based Model Predictive Control: Toward Safe Learning in Control," *Annual Review of Control, Robotics, and Autonomous Systems*, vol. 3, 2020.
+- Notebook 04 attributes the harm under motor lag and delay to lost phase margin, while RQ1 attributes it to input saturation within the horizon. The realizability ratio measures the second. Phase 4 must establish which mechanism dominates at the reference injection point.
+- The realizability ratio uses sensitivities linearized about hover. Its accuracy on aggressive trajectories, and against the exact linear-program answer, needs to be measured.
+- The trust state hides the plant state and the mismatch. Whether five features are enough for one policy across all mismatch types is an empirical question for Phase 7.
+- The baseline set may grow as the related work is surveyed further.
 
-[6] L. Brunke, M. Greeff, A. W. Hall, Z. Yuan, S. Zhou, J. Panerati, and A. P. Schoellig, "Safe Learning in Robotics: From Learning-Based Control to Safe Reinforcement Learning," *Annual Review of Control, Robotics, and Autonomous Systems*, vol. 5, 2022.
+---
 
-[7] G. Shi, X. Shi, M. O'Connell, R. Yu, K. Azizzadenesheli, A. Anandkumar, Y. Yue, and S.-J. Chung, "Neural Lander: Stable Drone Landing Control Using Learned Dynamics," *IEEE International Conference on Robotics and Automation (ICRA)*, 2019.
+## 12. Tooling
 
-[8] C. Dawson, S. Gao, and C. Fan, "Safe Control With Learned Certificates: A Survey of Neural Lyapunov, Barrier, and Contraction Methods for Robotics and Control," *IEEE Transactions on Robotics*, vol. 39, no. 3, 2023.
+Python, MuJoCo for simulation [24], CasADi [22] with IPOPT [23] for optimization-based control, and PyTorch for the learned components.
 
-[9] M. Faessler, A. Franchi, and D. Scaramuzza, "Differential Flatness of Quadrotor Dynamics Subject to Rotor Drag for Accurate Tracking of High-Speed Trajectories," *IEEE Robotics and Automation Letters*, vol. 3, no. 2, 2018.
+---
 
-[10] E. Garone, S. Di Cairano, and I. Kolmanovsky, "Reference and Command Governors for Systems with Constraints: A Survey on Theory and Applications," *Automatica*, vol. 75, 2017.
+## 13. Author
 
-[11] S. Berkenkamp, M. Turchetta, A. P. Schoellig, and A. Krause, "Safe Model-Based Reinforcement Learning with Stability Guarantees," *Advances in Neural Information Processing Systems (NeurIPS)*, 2017.
+MD Ashfakul Karim Kausik. Earlier work: [uav-mpc-learning](https://github.com/Ashfak-Kausik/uav-mpc-learning) [19].
 
-[12] A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath, and P. Tabuada, "Control Barrier Functions: Theory and Applications," *European Control Conference (ECC)*, 2019.
+---
 
-[13] L. Sha, "Using Simplicity to Control Complexity," *IEEE Software*, vol. 18, no. 4, 2001.
+## 14. References
 
-[14] R. Mahony, V. Kumar, and P. Corke, "Multirotor Aerial Vehicles: Modeling, Estimation, and Control of Quadrotor," *IEEE Robotics and Automation Magazine*, vol. 19, no. 3, 2012.
+[1] J. B. Rawlings, D. Q. Mayne, and M. M. Diehl, *Model Predictive Control: Theory, Computation, and Design*, 2nd ed., Nob Hill Publishing, 2017.
 
-[15] D. Mellinger and V. Kumar, "Minimum Snap Trajectory Generation and Control for Quadrotors," *IEEE International Conference on Robotics and Automation (ICRA)*, 2011.
+[2] A. Aswani, H. Gonzalez, S. S. Sastry, and C. J. Tomlin, "Provably safe and robust learning-based model predictive control," *Automatica*, vol. 49, no. 5, 2013.
 
-[16] J. Sola, "Quaternion Kinematics for the Error-State Kalman Filter," *arXiv:1711.02508*, 2017.
+[3] P. Bouffard, A. Aswani, and C. J. Tomlin, "Learning-based model predictive control on a quadrotor: Onboard implementation and experimental results," *Proc. IEEE ICRA*, 2012.
 
-[17] J. B. Rawlings, D. Q. Mayne, and M. M. Diehl, *Model Predictive Control: Theory, Computation, and Design*, 2nd ed., Nob Hill Publishing, 2017.
+[4] T. Koller, F. Berkenkamp, M. Turchetta, and A. Krause, "Learning-based model predictive control for safe exploration," *Proc. IEEE CDC*, 2018.
 
-[18] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, and M. Diehl, "CasADi: A Software Framework for Nonlinear Optimization and Optimal Control," *Mathematical Programming Computation*, vol. 11, no. 1, 2019.
+[5] G. Torrente, E. Kaufmann, P. Foehn, and D. Scaramuzza, "Data-driven MPC for quadrotors," *IEEE Robotics and Automation Letters*, vol. 6, no. 2, 2021.
 
-[19] A. Waechter and L. T. Biegler, "On the Implementation of an Interior-Point Filter Line-Search Algorithm for Large-Scale Nonlinear Programming," *Mathematical Programming*, vol. 106, no. 1, 2006.
+[6] T. Salzmann, E. Kaufmann, J. Arrizabalaga, M. Pavone, D. Scaramuzza, and M. Ryll, "Real-time neural MPC: Deep learning model predictive control for quadrotors and agile robotic platforms," *IEEE Robotics and Automation Letters*, vol. 8, no. 4, 2023.
 
-[20] E. Todorov, T. Erez, and Y. Tassa, "MuJoCo: A Physics Engine for Model-Based Control," *IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2012.
+[7] A. Saviolo and G. Loianno, "Learning quadrotor dynamics for precise, safe, and agile flight control," *Annual Reviews in Control*, vol. 55, 2023.
+
+[8] L. Hewing, J. Kabzan, and M. N. Zeilinger, "Cautious model predictive control using Gaussian process regression," *IEEE Trans. Control Systems Technology*, vol. 28, no. 6, 2020.
+
+[9] K. P. Wabersich and M. N. Zeilinger, "A predictive safety filter for learning-based control of constrained nonlinear dynamical systems," *Automatica*, vol. 129, 2021.
+
+[10] F. Berkenkamp, M. Turchetta, A. P. Schoellig, and A. Krause, "Safe model-based reinforcement learning with stability guarantees," *Proc. NeurIPS*, 2017.
+
+[11] T. Zhang, J. Xu, and H. Zhang, "Enhancing safety in model-based reinforcement learning with high-order control barrier functions," *Int. J. Robust and Nonlinear Control*, vol. 35, pp. 3844-3855, 2025.
+
+[12] X. Wang, H. Zhang, S. Wang, W. Xiao, and M. Guay, "Safe learning control with optimality and stability guarantees," *IEEE Trans. Automatic Control*, 2026, doi: 10.1109/TAC.2026.3707508.
+
+[13] F. L. Lewis and D. Vrabie, "Reinforcement learning and adaptive dynamic programming for feedback control," *IEEE Circuits and Systems Magazine*, vol. 9, no. 3, 2009.
+
+[14] D. Liu and Q. Wei, "Policy iteration adaptive dynamic programming algorithm for discrete-time nonlinear systems," *IEEE Trans. Neural Networks and Learning Systems*, vol. 25, no. 3, 2014.
+
+[15] B. Lakshminarayanan, A. Pritzel, and C. Blundell, "Simple and scalable predictive uncertainty estimation using deep ensembles," *Proc. NeurIPS*, 2017.
+
+[16] D. Limon, I. Alvarado, T. Alamo, and E. F. Camacho, "MPC for tracking piecewise constant references for constrained linear systems," *Automatica*, vol. 44, no. 9, 2008.
+
+[17] E. Garone, S. Di Cairano, and I. Kolmanovsky, "Reference and command governors for systems with constraints: A survey on theory and applications," *Automatica*, vol. 75, 2017.
+
+[18] H. Zhang, F. L. Lewis, and A. Das, "Optimal design for synchronization of cooperative systems: State feedback, observer and output feedback," *IEEE Trans. Automatic Control*, vol. 56, no. 8, 2011.
+
+[19] M. A. K. Kausik et al., "Learning-augmented control for quadrotor MPC in MuJoCo: When a feedforward residual architecture helps, hurts, or does nothing," to appear in *Proc. IEEE iCONEECT*, 2026.
+
+[20] A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath, and P. Tabuada, "Control barrier functions: Theory and applications," *Proc. European Control Conference (ECC)*, 2019.
+
+[21] L. Sha, "Using simplicity to control complexity," *IEEE Software*, vol. 18, no. 4, 2001.
+
+[22] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, and M. Diehl, "CasADi: A software framework for nonlinear optimization and optimal control," *Mathematical Programming Computation*, vol. 11, no. 1, 2019.
+
+[23] A. Waechter and L. T. Biegler, "On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming," *Mathematical Programming*, vol. 106, no. 1, 2006.
+
+[24] E. Todorov, T. Erez, and Y. Tassa, "MuJoCo: A physics engine for model-based control," *Proc. IEEE/RSJ IROS*, 2012.
