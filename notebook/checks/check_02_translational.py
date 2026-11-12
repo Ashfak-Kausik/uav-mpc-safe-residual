@@ -50,4 +50,25 @@ Dec = sp.Matrix([[sp.diff(xdd[i], T), 0, 0, 0] for i in range(3)])
 rep.check("2nd-derivative decoupling matrix of (x,y,z) has rank 1 -> no vector relative degree without dynamic extension",
           Dec.subs({q0: 1, q1: 0, q2: 0, q3: 0}).rank() == 1)
 
+# Dynamic extension (entry 02, Mistler et al. 2001): with T a state and Tddot an input, the 4th derivative
+# of position and the 2nd derivative of yaw depend on (Tddot, tau) through an invertible matrix when T > 0.
+# p'''' = (Tddot b3 + 2 Tdot b3dot + T b3ddot)/m,  b3ddot = R(w x (w x e3)) + R(wdot x e3),  wdot = I^-1(tau - w x Iw)
+# Near hover yaw psi has psi'' = wz_dot (+ terms without inputs).
+Ixx, Iyy, Izz = sp.symbols("I_xx I_yy I_zz", positive=True)
+Tdd, tx, ty, tz = sp.symbols("Tdd tau_x tau_y tau_z", real=True)
+wv = sp.Matrix(sp.symbols("w1:4", real=True))
+Tdot = sp.symbols("Tdot", real=True)
+Iin = sp.diag(Ixx, Iyy, Izz)
+wdot = Iin.inv() * (sp.Matrix([tx, ty, tz]) - wv.cross(Iin * wv))
+b3dd = R * (wv.cross(wv.cross(e3))) + R * (wdot.cross(e3))
+b3d = R * (wv.cross(e3))
+p4 = (Tdd * (R * e3) + 2 * Tdot * b3d + T * b3dd) / m
+yaw2 = wdot[2]
+outs = sp.Matrix([p4[0], p4[1], p4[2], yaw2])
+Dmat = outs.jacobian(sp.Matrix([Tdd, tx, ty, tz]))
+at_hover = {q0: 1, q1: 0, q2: 0, q3: 0, wv[0]: 0, wv[1]: 0, wv[2]: 0}
+D0 = sp.simplify(Dmat.subs(at_hover))
+rep.check("dynamic extension: decoupling matrix of (x,y,z,psi) wrt (Tddot, tau) is invertible at hover for T>0",
+          sp.simplify(D0.det()) != 0, f"det = {sp.factor(D0.det())}")
+
 raise SystemExit(rep.finish())

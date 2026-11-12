@@ -45,7 +45,7 @@ with $R = R(\mathbf{q})$. Reading it from right to left: $R^{\top}\mathbf{v}$ is
 
 Four qualifications keep this model honest.
 
-- **It is a near-hover approximation.** The physical force scales with rotor speed as well as with velocity. Near hover the rotor speeds are roughly constant, so the coefficients can be treated as constants. In aggressive flight they vary with thrust.
+- **It is a near-hover approximation.** The physical force scales with rotor speed as well as with velocity. Förster's identification of the Crazyflie 2.0 models it as $\mathbf{K}_{\text{aero}}\,(\sum_i \Omega_i)\,\mathbf{v}$ in the body frame, with $\mathbf{K}_{\text{aero}} = -\operatorname{diag}(9.18, 9.18, 10.3)\times 10^{-7}$ kg/rad. Near hover the rotor speeds are roughly constant, so the coefficients can be treated as constants: $d_{x,y} \approx 7\times 10^{-3}$ N·s/m at the hover rotor speed (*derived* from Förster's maps, order of magnitude only, [checks/params.py](checks/params.py)). In aggressive flight they vary with thrust.
 - **The velocity is the velocity relative to the air.** We assume still air, so this equals $\mathbf{v}$. Wind is outside the study.
 - **The in-plane coefficients are typically the larger ones.** $d_x$ and $d_y$ describe motion in the plane of the rotors, where the effect arises, and $d_z$ is typically smaller. The values are vehicle-specific and must be identified, not assumed.
 - **It also produces a torque.** The force acts at the rotor hubs, which do not lie exactly at the height of the centre of mass. We neglect this torque initially and record it as an excluded effect.
@@ -97,7 +97,13 @@ Both relations describe a rotor in still air at steady speed. The variation of t
 
 $$\mathbf{u} = (f_1, f_2, f_3, f_4) .$$
 
-The map between $f_i$ and $\Omega_i$ is a fixed monotone square root, so carrying $\Omega_i$ adds nothing at this stage. When we add motor lag we will have to decide whether the first-order lag acts on $f_i$ or on $\Omega_i$, because those are not the same model, and we will state that choice explicitly then.
+The map between $f_i$ and $\Omega_i$ is a fixed monotone square root, so carrying $\Omega_i$ adds nothing at this stage.
+
+**Motor lag in the nominal model (decision Q1).** The rotors do not deliver a commanded thrust instantly. Entry 00 records why the nominal model includes this lag on the Crazyflie: the motor is slower than the attitude dynamics. The input of the MPC is therefore the vector of **commanded** thrusts, $\mathbf{u} = \mathbf{f}^{\text{cmd}}$. The **delivered** thrusts $\mathbf{f}$ are states with a first-order lag on thrust:
+
+$$\tau_m\,\dot f_i = f_i^{\text{cmd}} - f_i, \qquad i = 1,\dots,4 .$$
+
+The lag acts on **thrust**, not on rotor speed, for two reasons. First, Förster identified the vehicle's lag exactly in this form, from motor command to measured thrust. His transfer function $H(z) = 7.23\times10^{-8}/(1 - 0.96954\,z^{-1})$ at 500 Hz gives $\tau_m \approx 65$ ms (*derived*; his second data series gives 77 ms). Second, a lag on thrust keeps the nominal model linear in its input, which entry 06 needs. A lag on rotor speed, $\tau_m\dot\Omega_i = \Omega_i^{\text{cmd}} - \Omega_i$ with $f_i = k_f\Omega_i^2$, has the *same* time constant in the linearization about any operating point (because $\delta f_i = 2k_f\Omega_i\,\delta\Omega_i$). It differs only for large steps. RotorPy uses the rotor-speed form. Entry 07 decides which form the plant uses and treats the difference as part of the perturbation model.
 
 ---
 
@@ -124,7 +130,7 @@ With $+x$ forward and $+y$ to the left, the four rotors are numbered counter-clo
 
 Here $s_i$ is the sign of the reaction torque about body z. A rotor that spins clockwise seen from above spins in the negative sense about body z, so its reaction on the airframe is positive. Diagonal pairs (1, 3) and (2, 4) share a spin direction, which is what makes the reaction torques cancel at equal thrusts.
 
-**Correspondence with the Crazyflie.** The spin pattern above is expected to match the Crazyflie 2.x, where the front-left and back-right propellers turn clockwise. The Crazyflie's own motor numbering is different from ours: its M1 is the front-right motor and the numbering proceeds clockwise seen from above, so M1, M2, M3, M4 correspond to our rotors 4, 3, 2, 1. This mapping is recorded from the vehicle documentation as we recall it and must be confirmed in Phase 2, because a permuted motor order produces a simulator that hovers correctly and turns the wrong way.
+**Correspondence with the Crazyflie (verified).** The Crazyflie's own motor numbering is different from ours. Its firmware mixer (`power_distribution_quadrotor.c`) places M1 at front-right, M2 at rear-right, M3 at rear-left and M4 at front-left, numbering clockwise seen from above. So M1, M2, M3, M4 are our rotors 4, 3, 2, 1. The Bitcraze propeller documentation mounts the counter-clockwise propellers on M1 and M3 and the clockwise ones on M2 and M4. Our rotor 1 (= M4) and rotor 3 (= M2) are therefore clockwise, as in the table. Phase 2 still tests the mapping in simulation, because a permuted motor order produces a simulator that hovers correctly and turns the wrong way.
 
 ### From rotor position to roll and pitch torque
 
@@ -194,7 +200,11 @@ Invertibility matters for the project: any wrench we might want has exactly one 
 
 $$\frac{c_{\tau f}}{a},$$
 
-a dimensionless number that belongs to the vehicle. We do not quote a universal value for it, because it varies widely. On larger quadrotors, with arms of 0.15 m or more, it is commonly of order one tenth, and yaw is by far the weakest axis. On a vehicle the size of the Crazyflie the arm is only a few centimetres, and the published values of $c_{\tau f}$ differ by a factor of several between sources, so the ratio may be anywhere from roughly 0.2 to above 0.5. **This ratio must be identified for our vehicle before any claim about yaw authority is made.** The angular acceleration each torque produces also depends on the inertia about that axis, which entry 04 brings in.
+a dimensionless number that belongs to the vehicle. It is not universal. Its committed value for our vehicle is
+
+$$\frac{c_{\tau f}}{a} = \frac{0.00699\ \text{m}}{0.0325\ \text{m}} = 0.215,$$
+
+from the Bitcraze firmware's torque-to-thrust constant for the 2.1+ propellers and the 46 mm arm (parameter table below). The verified sources agree to within about 20 percent: Förster's 2.0 identification gives 0.183, and the firmware's legacy-propeller value gives 0.226. RotorPy is the exception: its coefficients give 1.12, about five times the others, although its comment cites Förster. We treat that as an error in RotorPy and record how we handle it below. The angular acceleration each torque produces also depends on the inertia about that axis, which entry 04 brings in.
 
 **Summary table.**
 
@@ -215,7 +225,9 @@ This section exists because our contribution is about what a correction can actu
 
 $$f_{\min} \le f_i \le f_{\max}, \qquad f_{\min} \ge 0, \qquad i = 1,\dots,4 .$$
 
-The upper bound is the obvious one. **The lower bound is the one that is easy to forget.** Fixed-pitch propellers spinning in one direction can only push; a rotor cannot pull the airframe down. So the input set is a box in the positive orthant, not a symmetric box about zero. In the derivations that follow we take $f_{\min} = 0$. On a real vehicle the motors are usually kept at a small positive idle thrust in flight, which raises $f_{\min}$ slightly and shrinks the set further.
+The upper bound is the obvious one. **The lower bound is the one that is easy to forget.** Fixed-pitch propellers spinning in one direction can only push; a rotor cannot pull the airframe down. So the input set is a box in the positive orthant, not a symmetric box about zero. In the derivations that follow we take $f_{\min} = 0$. On a real vehicle the motors are usually kept at a small positive idle thrust in flight, which raises $f_{\min}$ and shrinks the set further. Förster's thrust map for the 2.0 has an offset of $5.5\times10^{-4}$ N at zero command (under 1 percent of hover thrust). Entry 04 gives the authority formulas for general $f_{\min}$, so the bench test can set it later without rederivation.
+
+With motor lag in the nominal model, these limits apply to the **commanded** thrusts. The delivered thrusts, being first-order filtered versions of commands inside the box, stay inside the same box automatically.
 
 **The consequence: the admissible wrench set is a skewed box that cannot be separated axis by axis.** The image of the four-dimensional input box under the invertible map $\mathbf{M}$ is a polytope in $(T, \tau_x, \tau_y, \tau_z)$ space, specifically a parallelotope with eight faces, one for each rotor bound. It is *not* a set of independent intervals on $T$ and on each torque. The available torque depends on how much total thrust is being commanded, and on the other torques:
 
@@ -230,19 +242,19 @@ $$f_{\min} \;\le\; \mathbf{M}^{-1}\begin{bmatrix} T \\ \boldsymbol{\tau} \end{bm
 
 and it is cheap because we have $\mathbf{M}^{-1}$ in closed form above.
 
-**Rate limits.** Rotors cannot change thrust instantaneously either. We bound the rate of change:
+**Rate limits.** We also bound how fast the **commanded** thrust may change between control steps:
 
-$$|\dot f_i| \le \dot f_{\max} .$$
+$$|f^{\text{cmd}}_{i,k} - f^{\text{cmd}}_{i,k-1}| \le \delta_{\max} .$$
 
-Together with the motor lag we introduce as a mismatch, this is what turns the geometric question ("is this wrench reachable at all") into the finite-horizon question ("is it reachable *within the horizon that matters*").
+This is a design limit on the command, not a physical law of the motor; the motor's own slowness is already the lag above. Its value is chosen in entry 06. Together with the motor lag, this is what turns the geometric question ("is this wrench reachable at all") into the finite-horizon question ("is it reachable *within the horizon that matters*").
 
 **How this connects to the realizability ratio.** Because the MPC works directly with the rotor thrusts as its input, the limits above *are* the input constraints of the research proposal, with no further mapping:
 
 | Proposal symbol | Meaning | Defined here as |
 |---|---|---|
-| $u_k$ | input at step $k$ | $(f_1, f_2, f_3, f_4)$ |
+| $u_k$ | input at step $k$ | commanded thrusts $(f^{\text{cmd}}_1, \dots, f^{\text{cmd}}_4)$ |
 | $u_{\min},\ u_{\max}$ | input box limits | $f_{\min},\ f_{\max}$ on every rotor |
-| $\delta_{\max}$ | per-step rate limit | $\dot f_{\max}\,\Delta t$, for sample time $\Delta t$ |
+| $\delta_{\max}$ | per-step rate limit | bound on $\lvert f^{\text{cmd}}_{i,k} - f^{\text{cmd}}_{i,k-1}\rvert$, chosen in entry 06 |
 
 The realizability ratio is a ratio test against these box and rate limits in rotor-thrust space. That is the polytope test above, carried out in the coordinates where the polytope is a box. This is the reason for choosing rotor thrusts as the input: the constraint set is as simple as it can be exactly where the test is applied.
 
@@ -254,22 +266,55 @@ TWR is the single most useful scalar for comparing vehicles, since it says how m
 
 ---
 
-## Parameters to identify for the vehicle
+## The committed vehicle parameters
 
-Every symbol in this entry becomes a number in Phase 2. We list them here so that none is filled in by default. The typical values are for orientation only: they are recalled from published Crazyflie 2.x characterizations and are **not** to be used until they are checked against a cited source and against the simulator model.
+The vehicle is the **Crazyflie 2.1+ with standard propellers** (decision Q5 in [decisions.md](decisions.md); hardware purchase pending confirmation). No single source covers this vehicle completely, so the parameter set is a deliberate mix. Each number below carries its source, and the same values live in code in [checks/params.py](checks/params.py), which every check script imports.
 
-| Parameter | Symbol | Typical order for a Crazyflie 2.x | Status |
-|---|---|---|---|
-| Mass | $m$ | about 0.03 kg | to identify |
-| Arm length, centre to rotor | $l$ | about 0.046 m | to identify |
-| Effective moment arm | $a = l/\sqrt{2}$ | about 0.033 m | follows from $l$ |
-| Maximum thrust per rotor | $f_{\max}$ | about 0.15 N | to identify |
-| Thrust-to-weight ratio | TWR | about 2 | follows from $m$, $f_{\max}$ |
-| Torque-to-thrust ratio | $c_{\tau f}$ | 0.006 to 0.025 m, sources disagree | to identify, high priority |
-| Thrust rate limit | $\dot f_{\max}$ | not established | to identify |
-| Drag coefficients | $d_x, d_y, d_z$ | not established | to identify when drag is introduced |
+Sources (all verified, see [99_audit.md](99_audit.md), sections D and E):
+- **FW**: Bitcraze `crazyflie-firmware`, `src/platform/interface/platform_defaults_cf2.h`, constants for the 2.1+ propellers.
+- **FO**: J. Förster, *System identification of the Crazyflie 2.0 nano quadrocopter*, Bachelor thesis, ETH Zurich, 2015, DOI 10.3929/ethz-b-000214143, Appendix A. **Note:** FO identifies the Crazyflie **2.0**, not the 2.1+.
+- **RP**: RotorPy, `rotorpy/vehicles/crazyflie_params.py`; used only for comparison.
 
-Two of these deserve attention. A thrust-to-weight ratio near 2 means hover sits near the middle of each rotor's range, which entry 04 shows is exactly the boundary between two different saturation regimes. And the uncertainty in $c_{\tau f}$ spans a factor of four, which changes the yaw authority by the same factor.
+| Parameter | Symbol | Committed value | Source | Status |
+|---|---|---|---|---|
+| Mass | $m$ | 0.029 kg | FW `CF_MASS` | weigh on arrival |
+| Arm, centre to rotor | $l$ | 0.046 m | FW `ARM_LENGTH` (FO: 0.092 m between opposite motors) | fixed |
+| Effective moment arm | $a = l/\sqrt2$ | 0.0325 m | derived | — |
+| Max thrust per rotor | $f_{\max}$ | 0.12 N | FW `THRUST_MAX`, 2.1+ props | **re-identify by bench test** |
+| Min thrust per rotor | $f_{\min}$ | 0 N | assumption (FO 2.0 offset $5.5\times10^{-4}$ N) | **re-identify by bench test** |
+| Thrust map (command → thrust) | — | not needed while $f$ is the input | FO gives it for the 2.0 | **re-identify by bench test** |
+| Torque-to-thrust ratio | $c_{\tau f}$ | 0.00699 m | FW `THRUST2TORQUE`, 2.1+ props | — |
+| Inertia (plant) | $\mathbf{I}$ | FO full matrix: diagonal (16.57, 16.66, 29.26) × 10⁻⁶ kg·m², off-diagonal up to 1.80 × 10⁻⁶ | FO | 2.0 airframe |
+| Inertia (MPC model) | $\mathbf{I}_{\text{nom}}$ | diagonal of the above | FO | deliberate idealization, entry 03 |
+| Motor time constant | $\tau_m$ | 0.065 s (alternative series: 0.077 s) | derived from FO eq. 3.16 (3.15) | 2.0 motors |
+| Rotor drag | $d_{x}, d_y$ | ≈ 7 × 10⁻³ N·s/m at hover | derived from FO $\mathbf{K}_{\text{aero}}$ | order of magnitude |
+| Command rate limit | $\delta_{\max}$ | — | design choice | entry 06 |
+
+Derived groups (computed in [checks/params.py](checks/params.py)): **TWR = 4 f_max/(m g) = 1.69**, $c_{\tau f}/a = 0.215$, $I_{zz}/I_{xx} = 1.77$.
+
+**Cross-source spread, recorded as uncertainty.**
+- Mass: 27 g (Menagerie), 28 g (FO), 29 g (FW), 30 g (RP).
+- Maximum thrust: 0.12 N (FW, 2.1+ props), ≈ 0.15 N (FO, 2.0 props), 0.18 N (FW, thrust-upgrade kit). That is a TWR between 1.69 and about 2.5. Entry 04 shows that TWR = 2 is the boundary between two saturation regimes, so this spread matters. It is why $f_{\max}$ is the first number to re-identify.
+- $c_{\tau f}$: 0.00597 m (FO), 0.00699 (FW 2.1+), 0.00735 (FW legacy props), 0.0339 m (RP, rejected, see below).
+
+Two caveats are deliberate and stated here so that they are never forgotten. **The inertia and the motor lag come from the 2.0, the thrust and torque constants from the 2.1+.** The airframes are close but not identical. A bench test on the purchased vehicle will re-identify $f_{\max}$, the thrust map and, if possible, $\tau_m$, and this table will then change.
+
+---
+
+## How the simulators differ from this model
+
+**MuJoCo Menagerie Crazyflie (`bitcraze_crazyflie_2/cf2.xml`).** The model is actuated by a **body wrench**, not by four rotors. It has a collective-thrust motor with range 0–0.35 N and three body-moment motors with gear $-10^{-5}$, all applied at one site at the body origin. Two traps follow:
+- The moment gears are **negative**, so a positive control produces a negative moment.
+- The ranges are, in the model's own README, "currently arbitrary". The thrust range alone would mean TWR = 1.32.
+
+The model also has no rotor geometry, and its mass (27 g) and inertia (from an MIT identification) differ from ours. Our own simulator interface therefore owns the actuation. Commanded thrusts pass through the delay buffer (plant only), then the motor lag, then the per-rotor box. The mixer $\mathbf{M}$ turns the result into a wrench, and the interface applies that wrench to the body directly, overriding mass and inertia with the values above. Phase 2 tests the moment sign explicitly.
+
+**RotorPy (second simulator, decision Q4).** RotorPy differs from us in three ways.
+- **Rotor order.** It numbers rotors front-left, front-right, back-right, back-left (clockwise seen from above), while ours run counter-clockwise. Its directions vector $[1,-1,1,-1]$ is in its own sign convention. A fixed permutation maps its rotors to ours, and Phase 2 checks it.
+- **Motor lag on rotor speed**, with $\tau_m = 0.072$ s (see above).
+- **Yaw coefficient** $k_m/k_\eta = 0.0339$ m, which is 5.7 times Förster's value although the file cites Förster.
+
+For the main cross-simulator check we **override RotorPy's $c_{\tau f}$ with our committed value** and map its rotor order to ours. One additional run keeps RotorPy's native value, as a robustness check.
 
 ---
 
@@ -280,9 +325,12 @@ Two of these deserve attention. A thrust-to-weight ratio near 2 means hover sits
 - The drag mismatch is the linear rotor-drag model $-R\,\mathbf{D}\,R^{\top}\mathbf{v}$, valid near hover in still air.
 - The airframe is X configuration with effective moment arm $a = l/\sqrt{2}$, rotors numbered front-left, back-left, back-right, front-right, with adjacent rotors counter-rotating and rotors 1 and 3 clockwise seen from above.
 - Per-rotor thrust and reaction torque are quadratic in rotor speed, with reaction torque proportional to thrust through $c_{\tau f} = k_m/k_f$.
-- The control input is the vector of four rotor thrusts.
+- The control input is the vector of four **commanded** rotor thrusts. The delivered thrusts follow them through a first-order lag on thrust with time constant $\tau_m$, which is part of the nominal model (decision Q1).
 - The rotor-to-wrench map is the matrix $\mathbf{M}$ above, which is invertible with the closed-form inverse given. Positive $\tau_y$ is nose down.
-- The input constraint set is the per-rotor box $f_{\min} \le f_i \le f_{\max}$ with $f_{\min} \ge 0$ and a rate bound. Its image in wrench space is a thrust-dependent polytope, and realizability is tested in rotor-thrust space, where that polytope is a box.
+- The input constraint set is the per-rotor box $f_{\min} \le f^{\text{cmd}}_i \le f_{\max}$ with $f_{\min} \ge 0$, and a per-step rate bound on the command. Its image in wrench space is a thrust-dependent polytope, and realizability is tested in rotor-thrust space, where that polytope is a box.
+- The vehicle is the Crazyflie 2.1+ with the cited parameter mix above: FW thrust and torque constants, FO inertia and motor lag. TWR = 1.69, $c_{\tau f}/a = 0.215$.
+- The motor mapping M1–M4 → rotors 4, 3, 2, 1 is verified from the firmware.
+- The simulators are adapted to this model: the Menagerie model's actuation is replaced by our own interface. In RotorPy, $c_{\tau f}$ is overridden and the rotor order permuted, with one native-value run kept as a robustness check.
 
 **Deliberately left out of the nominal model.**
 - Rotor drag, added later as a mismatch. Quadratic body drag and the torque produced by rotor drag, excluded altogether.
@@ -291,10 +339,10 @@ Two of these deserve attention. A thrust-to-weight ratio near 2 means hover sits
 - **Rotor spin-up torque.** Accelerating a rotor requires a torque on it, and the airframe receives the opposite reaction: $\tau_{z,\text{spin}} = J_r \sum_i s_i\,\dot\Omega_i$ about body z. This one deserves a sharper caveat than the previous. Commanding yaw *is* commanding $\dot\Omega_i$, and this term has the same sign as the aerodynamic reaction torque it accompanies, so during fast yaw transients it adds to the yaw torque and is not obviously negligible. We exclude it from the nominal model, and we flag it as an effect to check numerically once the simulator runs, not as a settled dismissal.
 
 **Open, to be settled in later entries.**
-- Whether motor lag acts on thrust or on rotor speed (the perturbation entry).
-- The numerical values of every parameter in the table above (Phase 2).
-- The Crazyflie motor-numbering correspondence (Phase 2).
+- Whether the *plant's* motor lag acts on thrust or on rotor speed (entry 07). The nominal model's lag acts on thrust.
+- The bench re-identification of $f_{\max}$, $f_{\min}$, the thrust map and, if possible, $\tau_m$ on the purchased 2.1+ (hardware phase). Until then, results are reported with the committed values and the TWR spread in mind.
+- The command rate limit $\delta_{\max}$ (entry 06).
 
 **Open for the next entry (02, translational dynamics).** We now have the forces and torques and we know they live in mixed frames, thrust in the body frame and gravity in the world frame, joined by the orientation. Entry 02 uses this to write the translational equations of motion: how the total force produces linear acceleration in the world frame once the body thrust is rotated in. Entry 03 then does the rotational half, taking the torques $\boldsymbol{\tau}$ produced by the map above and turning them into angular acceleration about the body axes.
 
-*This entry is locked. We do not proceed to 02 until every choice above can be explained in plain language, in particular: the two different torque mechanisms, why the effective arm is $l/\sqrt{2}$ and not $l$, why positive pitch torque comes from the rear rotors, why the strength of yaw relative to roll is the ratio $c_{\tau f}/a$ and must be identified for our vehicle, why a rotor's lower thrust bound is not negative, and why the admissible wrench set is a thrust-dependent polytope that becomes a simple box only in rotor-thrust coordinates.*
+*This entry is locked. We do not proceed to 02 until every choice above can be explained in plain language, in particular: the two different torque mechanisms, why the effective arm is $l/\sqrt{2}$ and not $l$, why positive pitch torque comes from the rear rotors, why the strength of yaw relative to roll is the ratio $c_{\tau f}/a$ and where its committed value of 0.215 comes from, why a rotor's lower thrust bound is not negative, why the admissible wrench set is a thrust-dependent polytope that becomes a simple box only in rotor-thrust coordinates, why the nominal model's motor lag acts on thrust, and which committed parameters come from which source and vehicle version.*

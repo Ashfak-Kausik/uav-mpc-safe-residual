@@ -54,7 +54,11 @@ dm = sp.symbols("Delta_m", real=True)
 rep.check("open-loop mass bias zddot = -g dm/(m+dm)", sp.simplify(m * g / (m + dm) - g + g * dm / (m + dm)) == 0)
 
 # Drag trim: exact pitch for constant velocity v along x vs approximation d_x v/(m g)
-mm, gg, dx, dz = 0.027, 9.81, 9.1e-3, 1.0e-2  # placeholder magnitudes only, NOT parameters
+import params as P
+D = P.derived()
+mm, gg = P.m, P.g
+dx = D["d_xy ~ K_aero*4*w_hover [N s/m]"]
+dz = P.K_aero[2] / P.K_aero[0] * dx  # same rotor-speed scaling on the z axis
 
 
 def trim(vel):
@@ -73,11 +77,45 @@ for vel in (0.5, 1.0, 2.0):
     approx = dx * vel / (mm * gg)
     worst = max(worst, abs(th - approx) / abs(th))
     print(f"   v = {vel} m/s: exact trim pitch {th:.5f} rad, approx d_x v/(m g) = {approx:.5f} rad")
-rep.check("drag trim pitch ~ d_x v/(m g), positive (nose down into the motion)", worst < 0.02, f"max rel err {worst:.1e}")
+rep.check("drag trim pitch ~ d_x v/(m g) to 0.2 % up to 2 m/s, positive (nose down into the motion)", worst < 0.002, f"max rel err {worst:.1e}")
+rep.check("drag trim tilt ~ 0.025 rad per m/s (entry 04)", abs(D["drag trim tilt per m/s [rad]"] - 0.025) < 0.001)
 
-# Units of the 'dimensionless' group a m g / Ixx
+# Regression for audit A-04-1: a m g / Ixx has units 1/s^2; t_att = sqrt(Ixx/(a m g)) is a time,
+# and tau_m / t_att is the dimensionless group.
 L_, M_, T_ = sp.symbols("L M Tm", positive=True)  # length, mass, time dimensions
 dims = (L_ * M_ * L_ / T_**2) / (M_ * L_**2)
-rep.check("a m g / I_xx is dimensionless (entry 04 claim)", sp.simplify(dims) == 1, f"actual dimension = {sp.simplify(dims)} (1/s^2)")
+rep.check("a m g / I_xx has units 1/s^2 (an angular acceleration, not a dimensionless group)", sp.simplify(dims * T_**2) == 1)
+rep.check("t_att = sqrt(I_xx/(a m g)) has units of time, so tau_m/t_att is dimensionless",
+          sp.simplify(sp.sqrt(1 / dims) / T_) == 1)
+
+# Committed numbers quoted in entry 04 (Crazyflie 2.1+, entry 01 / decision Q5)
+quoted = {
+    "TWR": (1.69, 0.005),
+    "c_tf/a": (0.215, 0.0005),
+    "Izz/Ixx": (1.77, 0.005),
+    "t_att [s]": (0.042, 0.0005),
+    "tau_m/t_att": (1.53, 0.005),
+    "a_up,max [m/s^2]": (6.7, 0.05),
+    "max coordinated tilt [deg]": (54, 0.5),
+    "yaw/roll angular-accel ratio": (0.12, 0.005),
+}
+for k, (val, tol) in quoted.items():
+    rep.check(f"entry 04 quotes {k} = {val}", abs(D[k] - val) <= tol, f"computed {D[k]:.4g}")
+rep.check("TWR < 2: hover torque authority is ceiling-limited, = 69 % of the floor-limited value",
+          D["TWR"] < 2 and abs(D["tau_x,max hover [N m]"] / D["tau_x,max if floor-limited [N m]"] - 0.69) < 0.005)
+
+# Motor lag in the nominal model: transfer functions with the lag pole (entry 04 table)
+tau = sp.symbols("tau_m", positive=True)
+lag = 1 / (tau * s + 1)
+Gx_cmd = Gx * lag      # commanded pitch torque -> x  (tau_y is a linear combination of delivered thrusts)
+Gz_cmd = (1 / (m * s**2)) * lag
+rep.check("commanded pitch torque -> x = g/(Iyy s^4 (tau_m s + 1))  (order 5)",
+          sp.simplify(Gx_cmd - g / (Iyy * s**4 * (tau * s + 1))) == 0 and sp.degree(sp.denom(sp.together(Gx_cmd)), s) == 5)
+rep.check("commanded collective thrust -> z = 1/(m s^2 (tau_m s + 1))  (order 3)",
+          sp.degree(sp.denom(sp.together(Gz_cmd)), s) == 3)
+# equilibrium with the lag state: fdot = (fcmd - f)/tau = 0  <=>  f = fcmd = m g / 4
+fcmd = sp.symbols("fcmd", real=True)
+rep.check("lag state at equilibrium: delivered = commanded = m g/4",
+          sp.solve(sp.Eq((fcmd - m * g / 4) / tau, 0), fcmd) == [m * g / 4])
 
 raise SystemExit(rep.finish())

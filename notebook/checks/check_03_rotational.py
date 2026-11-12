@@ -76,8 +76,10 @@ for sign, label in [(1, "correct"), (-1, "flipped")]:
 for k, (dE, dLmag, dL) in res.items():
     print(f"   {k:8s}: rel. energy drift {dE:.1e}, rel. |I w| drift {dLmag:.1e}, rel. world-L vector drift {dL:.1e}")
 rep.check("energy is conserved with the CORRECT gyroscopic sign", res["correct"][0] < 1e-8)
-rep.check("entry 03 claim 'wrong sign -> energy drifts' holds", res["flipped"][0] > 1e-6,
-          "FALSE: energy and |Iw| are conserved under either sign (w.(w x Iw) = 0)")
-rep.check("world-frame angular momentum VECTOR R I w detects the flipped sign", res["flipped"][2] > 1e-3 and res["correct"][2] < 1e-8)
+# Regression for audit A-03-1 (entry 03 now says energy CANNOT detect the sign).
+rep.check("energy and |Iw| are conserved under the FLIPPED sign too (energy test is blind to the sign)",
+          res["flipped"][0] < 1e-8 and res["flipped"][1] < 1e-8)
+rep.check("world-frame angular momentum VECTOR R I w detects the flipped sign (standing test 4)",
+          res["flipped"][2] > 1e-3 and res["correct"][2] < 1e-8)
 
 raise SystemExit(rep.finish())

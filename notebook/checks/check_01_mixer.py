@@ -73,10 +73,15 @@ Mn = np.array(mixer(a_, 0.006).evalf(), dtype=float)
 res = linprog(-Mn[3], A_eq=Mn[[0, 1, 2]], b_eq=[m * g, 0, 0], bounds=[(0, fmax)] * 4, method="highs")
 rep.check("tau_z,max(hover) = c m g min(1, TWR-1) matches LP", abs(-res.fun - 0.006 * m * g * 1.0) < 1e-9)
 
-# Entry 04 ratio c/a ~ 1/15 vs entry 01 range
-for c_val in (0.006, 0.025):
-    print(f"   c_tf = {c_val} m, a = {a_:.4f} m  ->  c_tf/a = {c_val / a_:.3f}")
-rep.check("entry 04 'c_tf/a ~ 1/15' consistent with entry 01 c_tf range 0.006-0.025 m",
-          0.006 / a_ <= 1 / 15 <= 0.025 / a_, "1/15 = 0.067 lies below the entry-01 range 0.18-0.77")
+# Committed yaw penalty c_tf/a (entries 01 and 04) vs the verified sources.
+# Regression for audit B-2: the old value 'c_tf/a ~ 1/15' matched no source.
+import params as P
+ratio = P.c_tf / P.a
+src = {"Foerster 2.0": 0.005964552 / (0.046 / np.sqrt(2)),
+       "FW legacy props": 0.007350862856566459 / (0.046 / np.sqrt(2))}
+print(f"   committed c_tf/a = {ratio:.3f}; sources: " + ", ".join(f"{k} {v:.3f}" for k, v in src.items()))
+rep.check("committed c_tf/a = 0.215 (as quoted in entries 01 and 04)", abs(ratio - 0.215) < 5e-4)
+rep.check("committed c_tf/a lies within the verified FO/FW source spread", min(src.values()) <= ratio <= max(src.values()))
+rep.check("old entry-04 value 1/15 is outside the verified spread (audit B-2 stays fixed)", not (min(src.values()) <= 1 / 15 <= max(src.values())))
 
 raise SystemExit(rep.finish())

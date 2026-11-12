@@ -100,10 +100,14 @@ Second, our realizability analysis is about what the four rotors can deliver und
 
 **Step 6, what we deliberately did NOT add (and why).** We considered enlarging the state further, and made two explicit decisions.
 
-- **Actuator dynamics (delivered rotor thrusts, delayed commands).** These are real states: the delivered thrust at one instant depends on what was commanded earlier, which is memory in exactly the sense of the prediction test. We keep them out of the *base* rigid-body state and add them as a separate actuator state when we model motor lag and delay. The full plant state is then the pair of the rigid-body state defined here and the actuator state, as in the research proposal. Keeping the two separate is deliberate: the nominal MPC model uses only the rigid-body state with ideal actuators, and the actuator state is precisely what it does not know about.
+- **Actuator dynamics (delivered rotor thrusts, delayed commands).** These are real states: the delivered thrust at one instant depends on what was commanded earlier, which is memory in exactly the sense of the prediction test. We keep them out of the *rigid-body* state defined in this entry and carry them in a separate **actuator state**. The two parts of the actuator state are treated differently, and the difference is a decision (Q1 in [decisions.md](decisions.md)), not a convenience:
+  - **Delivered rotor thrusts (motor lag) are part of the nominal model.** On the Crazyflie the identified motor time constant is about 65 ms. The vehicle's own attitude time scale is about 42 ms (entry 04). So the motor is *slower* than the dynamics it drives. A nominal model with ideal actuators would be wrong about the real vehicle before any mismatch is injected. The nominal MPC therefore carries the four delivered thrusts as states, and its input is the four *commanded* thrusts. The "motor-lag mismatch" of this project is an error in the time constant, not the presence of a lag.
+  - **Delayed commands (actuation delay) are not part of the nominal model.** Delay remains a pure mismatch: the buffer of delayed commands exists in the plant and is unknown to the MPC.
+
+  The full plant state is the pair (rigid-body state, actuator state), as in the research proposal. The nominal model state is the rigid-body state plus the delivered thrusts.
 - **Sensor biases and estimator states (for example Extended Kalman Filter states).** These belong to *state estimation*, meaning recovering the state from noisy sensors. Our simulator provides the true state directly; we have no sensors, no measurement noise, and therefore no estimation problem. Adding these would be modelling a problem we do not have. We exclude them, and note sensor noise and estimation as a requirement of the later hardware phase only.
 
-Following this reasoning, we finalized a **13-number rigid-body state**, with the actuator state as a planned, separate addition.
+Following this reasoning, we finalized a **13-number rigid-body state**. The actuator state is a separate block on top of it: four delivered thrusts in the nominal model (17 numbers in total), plus a delay buffer that exists only in the plant.
 
 ---
 
@@ -144,10 +148,10 @@ We use two frames throughout, the fixed **world frame** and the **body frame** a
 
 ## Matching the simulator and the vehicle
 
-The conventions above were chosen on their merits, but they must also match the tools we use, and a mismatch here would be the silent kind. We record the expected correspondence now and verify it in Phase 2 before trusting it.
+The conventions above were chosen on their merits, but they must also match the tools we use, and a mismatch here would be the silent kind. The correspondence below has been checked against the tools' documentation and source code (audit, [99_audit.md](99_audit.md), sections A and E). Phase 2 must still confirm it with tests that would fail under the wrong assumption, because documentation describes intent and only a test describes behaviour.
 
-- **MuJoCo.** A free body in MuJoCo is expected to store position in the world frame, orientation as a scalar-first unit quaternion, linear velocity in the world frame, and angular velocity in the body frame, with world z up. If that holds, our state maps onto the simulator state with no conversion. The Phase 2 validation must confirm each of the four, in particular the frame of the angular velocity, with a test that would fail under the wrong assumption.
-- **Crazyflie.** The vehicle we model uses a forward-left-up body frame, which matches ours. Its firmware and logging interfaces, however, have historically reported the pitch angle with the nose-up sign, which is the opposite of the right-hand rule in that frame. Any pitch value that comes from Crazyflie firmware, logs, or published Crazyflie parameters must have its sign checked before use.
+- **MuJoCo.** For a free joint, the MuJoCo documentation (overview, "free joints") states that position and orientation are in the global frame, that the quaternion is stored scalar first, (w, x, y, z), that linear velocity is in the global frame, and that "the rotational velocities of a free joint are in the local body frame". This is exactly our state, with no conversion. One caveat: the free-joint position and linear velocity belong to the **body-frame origin**, not to the centre of mass. They coincide only when the body's inertial frame sits at its origin. The Menagerie Crazyflie model declares `inertial pos="0 0 0"`, so they coincide there. A model with an offset centre of mass would break assumption 2 above without any error message.
+- **Crazyflie.** The Bitcraze documentation states that the body frame is right-handed, x forward, y left, z up, which matches ours. The **reported pitch angle has the opposite sign**. The same documentation says pitch "is positive counter-clockwise – a positive pitch raises the drone's nose" in the reported Euler angles, while the estimator's quaternion uses the right-hand sign. The firmware stores the logged attitude as `.pitch = -pitch` ("adjusted for the legacy CF2 body coordinate system", `kalman_core.c`). So any pitch value that comes from Crazyflie firmware, logs or published Crazyflie data must be negated before it is compared with ours.
 
 ---
 
@@ -161,12 +165,13 @@ The conventions above were chosen on their merits, but they must also match the 
 - A rigid-body state $\mathbf{x} = (\mathbf{p}, \mathbf{v}, \mathbf{q}, \boldsymbol{\omega})$ of 13 numbers and 12 degrees of freedom: world-frame position and velocity, a unit-quaternion orientation, and body-frame angular velocity, with angular velocity kept as a real state (no perfect-inner-loop shortcut).
 - Hamilton quaternion convention, scalar part first, representing the body-to-world rotation, with $\mathbf{q}$ and $-\mathbf{q}$ denoting the same orientation.
 - Body angular velocity written as $(\omega_x, \omega_y, \omega_z)$, not (p, q, r).
+- An actuator state kept separate from the rigid-body state. The four delivered rotor thrusts (motor lag) belong to the nominal model. Delayed commands belong to the plant only (decision Q1).
 
 **Deferred, noted, not forgotten:**
-- The actuator state (delivered rotor thrusts and delayed commands) is added as a separate state when we model motor lag and delay.
+- The equations of the actuator state (first-order lag, delay buffer) are written in entry 01 (nominal lag) and entry 07 (perturbation models).
 - Sensor noise and estimator states are out of scope for the simulation study and return in the hardware phase.
-- The simulator and vehicle conventions listed above are expectations until Phase 2 verifies them.
+- The simulator and vehicle conventions above are documented facts. Phase 2 confirms them by test, including the Crazyflie pitch sign and the MuJoCo body-origin caveat.
 
 **Open for the next entry (01, forces and torques):** we established that thrust lives in the body frame and gravity in the world frame, connected by the orientation. Entry 01 makes this concrete: what forces and torques act on the drone, how the four rotors produce them, and what limits the rotors impose.
 
-*This entry is locked. We do not proceed to 01 until every choice above can be explained in plain language, in particular: why the frame and quaternion conventions had to be fixed before any equation was written, why positive pitch is nose down in our frame while it is nose up in the NED / FRD convention, and why the state has 12 degrees of freedom although it is stored in 13 numbers.*
+*This entry is locked. We do not proceed to 01 until every choice above can be explained in plain language, in particular: why the frame and quaternion conventions had to be fixed before any equation was written, why positive pitch is nose down in our frame while it is nose up in the NED / FRD convention, why the state has 12 degrees of freedom although it is stored in 13 numbers, and why motor lag belongs to the nominal model while actuation delay does not.*
