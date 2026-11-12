@@ -33,7 +33,14 @@ for _ in range(1000):
     b = w / np.linalg.norm(w)
     ok &= np.allclose(Treq / mm * b - gg * np.array([0, 0, 1]), ad)
 rep.check("inversion T_req = m||a+g e3||, b3_req = (a+g e3)/||.|| reproduces a_des", ok)
-rep.check("inversion singular at a_des = -g e3 (free fall: T=0, b3 undefined)", True, "note for the text, not a defect")
+# free fall: a_des = -g e3 gives T_req = 0 and an undefined direction; near it the direction is ill-conditioned
+gg_ = 9.81
+wff = np.array([0.0, 0.0, -gg_]) + gg_ * np.array([0, 0, 1])
+eps_ = 1e-3
+b_a = (np.array([eps_, 0, -gg_]) + gg_ * np.array([0, 0, 1])); b_a /= np.linalg.norm(b_a)
+b_b = (np.array([-eps_, 0, -gg_]) + gg_ * np.array([0, 0, 1])); b_b /= np.linalg.norm(b_b)
+rep.check("inversion singular at a_des = -g e3: T_req = 0, and a 2e-3 m/s^2 change in the request flips b3_req by 180 deg",
+          np.linalg.norm(wff) == 0 and np.isclose(b_a @ b_b, -1.0))
 
 # Relative degree with rotor thrusts as inputs.
 # With u = (T, tau), xddot = (T/m) b3_x : T appears at the 2nd derivative with coefficient b3_x/m,

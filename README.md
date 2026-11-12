@@ -130,7 +130,10 @@ These are targets, not established results.
 - **Trajectories.** Hover, circle, figure-eight, and an aggressive figure-eight close to the actuator limits.
 - **Generalization.** A second, heavier vehicle tests cross-vehicle generalization. RotorPy [52] provides a sim-to-sim check, with its rotor order mapped to ours and its yaw-moment coefficient set to our value, plus one run with its native value.
 
-**Mismatches.** Mass, rotor drag, an error in the motor time constant, and actuation delay, individually and in combination, with severities normalized to the vehicle's own limits.
+**Mismatches.** Mass, rotor drag, an error in the motor time constant, and actuation delay, individually and in combination, with severities normalized to the vehicle's own limits and to the nominal loop's stability boundaries ([notebook 07](notebook/07_perturbation_models.md)).
+- **Admissible set.** It is verified numerically. The nominal loop is stable for every mass and drag level studied, for motor-lag errors from 0.3 to 2 times the modelled time constant, and for injected delays up to two control periods.
+- **Interaction.** A lag error narrows the delay margin: a motor 50 % faster than modelled cuts it from 24.6 ms to 15.8 ms.
+- **Stress tests.** The points outside the admissible set.
 
 **Baselines.**
 
@@ -233,6 +236,7 @@ uav-mpc-safe-residual/
     ├── 04_hover_equilibrium.md
     ├── 05_discretization.md
     ├── 06_nominal_mpc.md
+    ├── 07_perturbation_models.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history

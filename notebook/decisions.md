@@ -153,6 +153,28 @@ The table "Re-registered predictions (after entry 06)" above is kept as recorded
 
 **Decision.** Lag error stays in the study, because it tests the *correction path*: whether a state-dependent residual can harm a loop that is itself comfortably stable (entry 10). Its sweep is extended to **4 $\tau_m$** so that the upper cliff itself is observed once. A point at 0.15 $\tau_m$ is also added, to observe the lower cliff of implementation (b) once (entry 07).
 
+## 2026-11-12 — Perturbation models and the admissible set (entry 07)
+
+- **Actuator chain** of the plant, in order:
+  1. clipped command
+  2. modelled computation delay (one period)
+  3. injected delay buffer (1 ms resolution)
+  4. motor lag
+  5. mixer
+  6. rigid body (full inertia), with rotor drag and mass
+- **Motor lag:** the thrust form is the primary plant, the same as the model and the identification, so that a lag error is purely an error in $\tau_m$. The rotor-speed form ($f \propto \Omega^2$, as in RotorPy) is a structural variant: identical for small signals, asymmetric for large steps.
+- **Mass:** a point mass at the centre of mass. Inertia and centre of mass are unchanged; off-centre payloads are excluded.
+- **Drag:** the Förster model scaled with rotor speed, absent from the nominal plant. Its grid goes to ×16, deliberately exaggerated.
+- **Grids:**
+  - lag error $\{0.15, \dots, 4\}\,\tau_m$
+  - delay $\{0.5, \dots, 8\}\,\Delta t$
+  - mass $\{0.8, \dots, 1.3\}$
+  - drag $\{1, \dots, 16\}$
+  - 36 combinations
+- **Admissible set Θ (Assumption 2, verified numerically, linear loop, implementation b):** the stable grid points. Stable: all mass and drag points, lag 0.3–2.0, delay up to 2 $\Delta t$, and 32 of 36 combinations. These are verified points, not a certified region. The unstable points are the stress tests.
+- **Finding (re-registered prediction).** A lag error narrows the delay margin. A motor *faster* than modelled by 50 percent cuts the delay cliff from 24.6 ms to **15.8 ms**; 1.5× slower cuts it to 22.7 ms; 2× slower, to 16.2 ms. The four unstable combinations are exactly lag ×0.5 with 2 $\Delta t$ of delay.
+- **Constraint on entry 10.** Near the cliffs, the closed-loop gain grows in the attitude states, not in position: the peak gain from reference to position stays at 1.00. The loop-gain bound must be computed on a gain that includes attitude.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.
