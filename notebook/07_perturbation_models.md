@@ -121,7 +121,21 @@ The grid of combinations is the product mass $\{1, 1.2\}$ × drag $\{1, 4\}$ × 
 - with $s_\tau = 2$ it falls to 16.2 ms;
 - with $s_\tau = 1.5$ it falls to 22.7 ms.
 
-A lag error that is harmless on its own therefore narrows the delay margin, and most in the direction one might think benign: a quicker motor. This is the predictor of implementation (b) at work. It expects a slow motor and commands accordingly, so a fast motor overshoots, and delay finishes the job.
+A lag error that is harmless on its own therefore narrows the delay margin, and most in the direction one might think benign: a quicker motor.
+
+**The mechanism (added 2026-11-12, tested rather than assumed).** The hypothesis to test was that the controller's open-loop thrust estimate lags the true thrust, which would raise the effective loop gain against a gain margin of only 2.66. The roll loop, broken at the controller output, gives:
+
+| True motor | Crossover $\omega_c$ | Phase margin | Gain margin | $\text{PM}/\omega_c$ | Loop gain at 100 rad/s |
+|---|---|---|---|---|---|
+| ×0.5 (faster) | 43.0 rad/s | 38.9° | 1.64 | 15.8 ms | 0.43 |
+| ×1 | 25.2 rad/s | 35.6° | 2.66 | 24.6 ms | 0.22 |
+| ×1.5 (slower) | 19.1 rad/s | 24.9° | 3.64 | 22.7 ms | 0.15 |
+
+The delay margins $\text{PM}/\omega_c$ reproduce the combined cliffs. The two directions fail for **different reasons**:
+- **A faster motor keeps its phase margin but moves the crossover up**, from 25 to 43 rad/s. Each millisecond of delay costs phase in proportion to frequency, so the same ~36–39° of margin is used up by less delay.
+- **A slower motor lowers the crossover but loses phase** (24.9° left). The two effects nearly cancel, which is why ×1.5 costs only 2 ms of delay margin.
+
+**The cause of the higher gain is the plant's own motor, not the estimate.** At 100 rad/s, the loop gain rises by a factor of 1.93 for the ×0.5 motor. That is exactly the ratio of the motor's own attenuation, $|1 + j\omega\tau_m| / |1 + j\omega\tau_m/2| = 1.93$: a faster motor simply passes more of the high-frequency command through. A counterfactual settles the role of the estimate. In it, the controller reads the *true* delivered thrust instead of its estimate. Its delay cliffs are 7.5 ms (×0.5), 15.3 ms (×1) and 15.9 ms (×1.5), so the same asymmetry appears without any estimate at all. **The hypothesis is therefore refuted as stated.** The estimate is not the cause; it actually *protects* the delay margin (24.6 ms against 15.3 ms with measured thrust). It is an internal model that the injected delay does not reach, so the controller's own idea of the thrust is not corrupted by the delay.
 
 **The admissible set**, for this study, is the set of grid points above that are stable: all single-mismatch points except the six listed as unstable, and 32 of the 36 combinations. It is a set of verified points, not a region. Between grid points stability is plausible from the smooth trend of the spectral radius, but not certified.
 
@@ -179,4 +193,4 @@ The nonlinear plant crosses its cliffs where the linear analysis says it should,
 
 **Open for the next entry (08, reference shaping).** Entry 08 must first resolve the critical open problem F-2: what the correct reference correction is for a mismatch with no steady-state effect. Lag error and delay are now known to be the cases that matter. It must then derive the map from predicted mismatch to reference shift through the MPC's steady-state target and, where needed, over the horizon. It must state its one-tick causality and saturation, and its relation to offset-free MPC. It must also decide whether the reference becomes a full trajectory over the horizon, which entry 06 deferred to it.
 
-*This entry is locked. We do not proceed to 08 until the following can be explained in plain language: the order of the actuator chain and why the delay sits before the motor lag; why the primary plant's lag is on thrust while the rotor-speed form is kept as a variant; why a mass error is modelled as a point mass at the centre of mass; why drag's grid exaggerates it; why a quicker-than-modelled motor shortens the delay margin; why the gain to tilt, not to position, is what grows near a cliff; and what the admissible set Θ is and is not (a set of verified points, not a certified region).*
+*This entry is locked. We do not proceed to 08 until the following can be explained in plain language: the order of the actuator chain and why the delay sits before the motor lag; why the primary plant's lag is on thrust while the rotor-speed form is kept as a variant; why a mass error is modelled as a point mass at the centre of mass; why drag's grid exaggerates it; why a quicker-than-modelled motor shortens the delay margin (higher crossover at an unchanged phase margin, caused by the plant's own lag attenuation, not by the thrust estimate); why the gain to tilt, not to position, is what grows near a cliff; and what the admissible set Θ is and is not (a set of verified points, not a certified region).*
