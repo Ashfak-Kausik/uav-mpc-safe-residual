@@ -83,6 +83,43 @@ The source of every parameter is recorded in entry 01. $f_{\max}$ and the thrust
 
 **Open.** Solve time at 100 Hz is unverified until Phase 3. A change of $\Delta t$ will be a dated amendment here.
 
+## 2026-11-12 — Deployment of the nominal MPC (entry 06)
+
+**Decision.** The nominal controller is a linear MPC in error form about hover, solved **on board** the Crazyflie's STM32F405 (Cortex-M4F, 168 MHz), at a target rate of 100 Hz. A nonlinear MPC is at most a simulation-only comparison.
+
+**Alternative rejected.** Offboard MPC on a PC, with commands sent by radio. The radio latency would then be a real, **unmeasured delay**, and delay is one of the injected mismatches. The nominal loop tolerates only about 2.5 control periods of it (entry 06).
+
+**Precedent (verified).**
+- TinyMPC (ICRA 2024): on-board linear MPC on the Crazyflie 2.1, 12 states.
+- Linder (Linköping MSc thesis, 2024): on-board DAQP outer-loop MPC on a Crazyflie 2.0 at 100 Hz.
+- Wikner, Arnström and Axehill (arXiv:2603.09342, 2026): on-board DAQP inner-loop MPC on the Crazyflie 2.1 STM32F405, 12 states, N = 15, 500 Hz, worst case 1375 µs.
+
+**Correction to the brief.** The brief attributed "12 states at 500 Hz" to Linder (2024). That result is Wikner et al. (2026); Linder's is an outer loop at 100 Hz.
+
+**Open.** On-board solve time and memory for our larger problem (86 variables) are an estimate (entry 06, section 10) until measured on hardware.
+
+## 2026-11-12 — Nominal MPC design (entry 06)
+
+- **Model:** the 16-state error model (17-state quaternion model minus the redundant $q_0$), in the heading frame.
+- **Thrust estimate:** the delivered thrusts are *estimated* by the controller's own lag model, because the vehicle has no thrust sensor.
+- **Reference (resolves audit F-7 for the primary design):** $\mathbf r = (x, y, z, \psi)$, piecewise constant over the horizon, as in MPC for tracking. An artificial steady state $\boldsymbol\theta \in \mathbb R^4$ carries offset cost $\mathbf T = 100\,\mathbf G^\top\mathbf P\mathbf G$. A trajectory (preview) formulation is deferred to entry 08, with F-2.
+- **Horizon and weights:** N = 20 (4.7 $t_{\text{att}}$, 3.1 $\tau_m$). Bryson weights; $\mathbf R = \mathbf I/(0.0489\ \text{N})^2$, from the rotor's ceiling-side headroom. Riccati terminal cost.
+- **Constraints:**
+  - hard: input box $[f_{\min}, f_{\max}]$ and rate limit 0.0268 N per period;
+  - soft: tilt 20° and altitude ≥ 0, with one slack per family ($\rho_1 = 10^4$, $\rho_2 = 10^2$).
+- **Solver:** DAQP (dual active set), with OSQP as a cross-check.
+
+## 2026-11-12 — Re-registered predictions (after entry 06)
+
+These supersede, for quantitative use, the provisional predictions of entry 04, which stay in entry 04 unchanged. They hold for the nominal MPC of entry 06: setpoint formulation, no disturbance model, the linear closed loop with the controller's internal lag model.
+
+| Mismatch | Re-registered prediction |
+|---|---|
+| Delay | Nominal loop unstable beyond $D$ = **25.4 ms = 2.54 $\Delta t$ = 0.60 $t_{\text{att}}$** of injected delay. The effective loop delay at the cliff is $D + \Delta t/2$ = 30.4 ms. The sweep grid $\{0, \dots, 8\}\,\Delta t$ brackets it. |
+| Motor-lag error | Nominal loop unstable only when the true $\tau_m$ exceeds **3.28 times** the modelled one (0.212 s = 5.0 $t_{\text{att}}$). **Within the planned ±30–50 % sweep, a lag error cannot destabilize the nominal loop.** Any "hurts" regime for lag errors must come from the correction path (entry 10), not from the nominal loop. |
+| Mass | Steady altitude offset of **−49 mm for +10 %** mass (−99 mm for +20 %), linear in the error. A residual correction should remove it (helps). |
+| Drag | No steady effect in hover or on set-points. On a 1 m/s ramp it adds **0.023 m** to an intrinsic setpoint-tracking lag of 0.47 m, so a residual correction for drag can only help a little, and the reference formulation (entry 08) matters twenty times more. |
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.

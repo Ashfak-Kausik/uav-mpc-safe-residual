@@ -126,7 +126,7 @@ These are targets, not established results.
 **Setup.**
 - **Vehicle.** Crazyflie 2.1+ with standard propellers. Thrust and torque constants come from the Bitcraze firmware (thrust-to-weight ratio about 1.69). Inertia and motor lag come from Förster's system identification [51]. The source of every parameter is listed in [notebook 01](notebook/01_forces_and_torques.md). Maximum thrust and the thrust map will be re-identified on a bench once the hardware arrives.
 - **Simulation.** MuJoCo [43], starting from the Menagerie model [53], with rotor-level actuation (per-rotor limits, mixer, motor lag, delay) implemented in our own interface, because the Menagerie model is actuated by a body wrench.
-- **Controller.** MPC-for-tracking in CasADi [41], with IPOPT [42] during development and acados [40] for timing results.
+- **Controller.** A linear MPC for tracking on the lagged hover model, solved with the dual active-set QP solver DAQP [58]. Its target is the Crazyflie's own microcontroller at 100 Hz, following on-board MPC precedent on the same vehicle [54], [55], [56]; on-board feasibility for our problem size is an estimate until measured. Running on board keeps radio latency out of the loop, where it would otherwise be an unmeasured delay. A nonlinear MPC (CasADi [41], IPOPT [42], acados [40]) is at most a simulation-only comparison. The closest prior work puts a learned residual *inside* an embedded MPC [57]; ours only shifts the reference of an unchanged one.
 - **Trajectories.** Hover, circle, figure-eight, and an aggressive figure-eight close to the actuator limits.
 - **Generalization.** A second, heavier vehicle tests cross-vehicle generalization. RotorPy [52] provides a sim-to-sim check, with its rotor order mapped to ours and its yaw-moment coefficient set to our value, plus one run with its native value.
 
@@ -170,7 +170,13 @@ Notebook entry 04 classifies the four mismatches from an equilibrium analysis al
 | Motor-lag error | No, it removes phase margin | Lateral, at the entrance of a four-integrator chain | Hurts past a threshold; may weaken or vanish, since the identified lag is in the nominal model and the correction passes through the MPC | Threshold moves with the observer dynamics |
 | Delay | No, it removes phase margin faster | Lateral, at the entrance of a four-integrator chain | Hurts, with an earlier threshold | As lag error |
 
-These predictions are provisional. They are re-registered once the controller is fixed (notebook 06). If the experiments contradict them, the table changes and the reason is investigated.
+With the nominal controller fixed (notebook 06), these predictions were re-registered quantitatively ([decisions.md](notebook/decisions.md)):
+- **Delay:** the nominal loop loses stability at 25.4 ms of injected delay (2.5 control periods).
+- **Motor-lag error:** the nominal loop loses stability only when the true motor time constant exceeds 3.3 times the modelled one. So within a ±50 % lag error it stays stable, and any harm from lag errors would have to come from the correction path itself.
+- **Mass:** +10 % mass leaves a 49 mm altitude offset.
+- **Drag:** on a 1 m/s ramp, drag adds only 23 mm to a 0.47 m lag that is intrinsic to set-point tracking.
+
+If the experiments contradict these, the predictions change and the reason is investigated.
 
 ---
 
@@ -226,6 +232,7 @@ uav-mpc-safe-residual/
     ├── 03_rotational_dynamics.md
     ├── 04_hover_equilibrium.md
     ├── 05_discretization.md
+    ├── 06_nominal_mpc.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history
@@ -280,7 +287,7 @@ These are tracked here so that they are settled by evidence and not by assumptio
 
 ## 12. Tooling
 
-Python, MuJoCo for simulation [43] with RotorPy [52] as a second simulator, CasADi [41] with IPOPT [42] and acados [40] for optimization-based control, PyTorch for the learned components, and SymPy/NumPy for the derivation checks.
+Python, MuJoCo for simulation [43] with RotorPy [52] as a second simulator, DAQP [58] (with OSQP as a cross-check) for the nominal MPC, CasADi [41] with IPOPT [42] and acados [40] only for an optional nonlinear-MPC comparison in simulation, PyTorch for the learned components, and SymPy/NumPy for the derivation checks.
 
 ---
 
@@ -397,3 +404,13 @@ MD Ashfakul Karim Kausik. Earlier work: [uav-mpc-learning](https://github.com/As
 [52] S. Folk, J. Paulos, and V. Kumar, "RotorPy: A Python-based multirotor simulator with aerodynamics for education and research," arXiv:2306.04485, 2023. ICRA 2023 Workshop on the Role of Robotics Simulators for Unmanned Aerial Vehicles.
 
 [53] K. Zakka, Y. Tassa, and MuJoCo Menagerie Contributors, "MuJoCo Menagerie: A collection of high-quality simulation models for MuJoCo," http://github.com/google-deepmind/mujoco_menagerie, 2022.
+
+[54] K. Nguyen, S. Schoedel, A. Alavilli, B. Plancher, and Z. Manchester, "TinyMPC: Model-predictive control on resource-constrained microcontrollers," in *Proc. IEEE Int. Conf. Robotics and Automation (ICRA)*, pp. 1–7, 2024. DOI: [10.1109/ICRA57147.2024.10610987](https://doi.org/10.1109/ICRA57147.2024.10610987).
+
+[55] A. Linder, "Real-time certified MPC for a nano quadcopter," Master's thesis, Linköping University, 2024. URN: urn:nbn:se:liu:diva-201424.
+
+[56] J. Wikner, D. Arnström, and D. Axehill, "On real-time feasibility of high-rate MPC using an active-set method on nano-quadcopters," arXiv:2603.09342, 2026.
+
+[57] B. Akbari, J. Frank, and M. Greeff, "Tiny learning-based MPC for multirotors: Solver-aware learning for efficient embedded predictive control," *Mechatronics*, vol. 115, art. no. 103452, 2026. DOI: [10.1016/j.mechatronics.2025.103452](https://doi.org/10.1016/j.mechatronics.2025.103452).
+
+[58] D. Arnström, A. Bemporad, and D. Axehill, "A dual active-set solver for embedded quadratic programming using recursive LDLᵀ updates," *IEEE Trans. Automatic Control*, vol. 67, no. 8, pp. 4362–4369, 2022. DOI: [10.1109/TAC.2022.3176430](https://doi.org/10.1109/TAC.2022.3176430).
