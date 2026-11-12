@@ -357,3 +357,9 @@ These are not errors in 00–04, but they sit in the README and proposal claims 
 - **Q6 (C).** Approve the notebook as the single source of truth, with the proposal frozen and project_details archived?
 
 *This audit is a report. No entry is changed until the author approves the fix list above, item by item or as a whole.*
+
+---
+
+## Resolution (2026-11-12)
+
+The audit was approved in full. Fix list G (items 1–8) was applied to entries 00–04 and the README. Decisions Q1–Q6 are recorded in [decisions.md](decisions.md), together with the critical open problem F-2. Entry 08 must define the reference correction for zero-DC mismatches (lag error, delay) before any realizability or oracle work. The other forward issues (F-1, F-3 to F-7) are carried by the entries named in section F. The check scripts were revised so that every claim in the revised entries passes. The six original FAIL findings remain as regression checks that assert the corrected statements.

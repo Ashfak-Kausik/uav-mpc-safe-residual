@@ -1,3 +1,5 @@
+> **Superseded (2026-11-12).** This v1 planning document is kept for history only and is no longer maintained. The notebook is the single source of truth for every technical statement (see [decisions.md](decisions.md), Q6), and the README summarises it. Where this file disagrees with them (hard versus soft layer contents, number of phases, vehicles, notebook numbering, source of the non-degradation guarantee), they win. See [99_audit.md](99_audit.md), section C.
+
 # Clean-Room Journal Study — Project North Star (v1)
 
 *Planning document for the clean-room rebuild. Everything here WILL change as derivations and experiments land — this is a north star, not a contract. Written to be self-contained: if the working chat is lost, this file plus the frozen Paper 1 repo is enough to resume mid-project. Deliberately evaluative and specific.*
