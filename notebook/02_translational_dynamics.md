@@ -74,7 +74,7 @@ Having written the equation, we verify it against two situations we understand p
  
 $$\mathbf{0} = \frac{T}{m}\mathbf{e}_3 - g\,\mathbf{e}_3 \qquad\Longrightarrow\qquad \frac{T}{m} = g \qquad\Longrightarrow\qquad \boxed{T = mg}$$
  
-The thrust must equal the weight. This matches the intuition that to hover the drone must exactly overcome gravity, and it also tells us something we will use later: this is exactly why a mass mismatch matters. If the true mass differs from the value the controller assumes, the thrust it computes for hover will be wrong, and the drone will slowly sink or climb. We have, in effect, derived the reason mass mismatch is a perturbation worth studying. Note also what this says about the correction channel: a mass error is an error in a *scalar multiplying the one instantaneous degree of freedom*, which is the most favourable structure a mismatch can possibly have. We should expect, before running anything, that mass is the easiest of our perturbations to correct.
+The thrust must equal the weight. This matches the intuition that to hover the drone must exactly overcome gravity, and it also tells us something we will use later: this is exactly why a mass mismatch matters. If the true mass differs from the value the controller assumes, the thrust it computes for hover will be wrong. Open loop, the drone would steadily sink or climb. Under feedback, what happens depends on the controller: a controller without integral action settles at a constant altitude offset, and one with integral action removes it (entry 04). We have, in effect, derived the reason mass mismatch is a perturbation worth studying. Note also what this says about the correction channel: a mass error is an error in a *scalar multiplying the one instantaneous degree of freedom*, which is the most favourable structure a mismatch can possibly have. We should expect, before running anything, that mass is the easiest of our perturbations to correct.
  
 **Tilt producing sideways motion, with the sign done carefully.** Consider a rotation by angle θ about the body y axis. The sign here needs care, and it is worth spelling out because the FLU convention we adopted in entry 00 makes it the opposite of the aerospace habit. In FLU the body y axis points **left**, so by the right-hand rule a positive rotation about it carries the body z axis toward positive world x and carries the nose toward negative world z. **Positive pitch in our convention is therefore nose down**, and it tilts the thrust *forward*. (In the NED/FRD convention used by most autopilots, body y points right and positive pitch is nose up. The physics is identical; only the label flips. We record this here because it is exactly the kind of thing that gets silently imported wrong.)
  
@@ -108,7 +108,7 @@ The right-hand side is a fully known vector. Since $\mathbf{b}_3$ is a unit vect
  
 $$\boxed{\;T_{\text{req}} = m\,\big\|\mathbf{a}_{\text{des}} + g\,\mathbf{e}_3\big\|, \qquad \mathbf{b}_3^{\text{req}} = \frac{\mathbf{a}_{\text{des}} + g\,\mathbf{e}_3}{\big\|\mathbf{a}_{\text{des}} + g\,\mathbf{e}_3\big\|}\;}$$
  
-Any desired acceleration determines the required thrust magnitude and the required thrust *direction* uniquely. The remaining rotational freedom, yaw about that direction, is unconstrained by translation, which is why yaw is specified separately in a trajectory.
+Any desired acceleration determines the required thrust magnitude and the required thrust *direction* uniquely, with one exception. At $\mathbf{a}_{\text{des}} = -g\,\mathbf{e}_3$ (free fall) the thrust is zero and the direction is undefined. Near it the direction becomes ill-conditioned: a small change in the request swings $\mathbf{b}_3^{\text{req}}$ through a large angle. A reference correction that asks for near-free-fall is therefore a badly posed request, independently of the actuator limits. The remaining rotational freedom, yaw about the thrust direction, is unconstrained by translation, which is why yaw is specified separately in a trajectory.
  
 This is a small piece of algebra with outsized consequences for our project:
  
@@ -118,29 +118,53 @@ This is a small piece of algebra with outsized consequences for our project:
 4. It is the germ of **differential flatness**. The full statement, that every state and input of a quadrotor is an algebraic function of the position and yaw outputs and their derivatives, is exactly this inversion carried two derivatives further, through $\dot{\mathbf{b}}_3$ to the required body rates and through $\ddot{\mathbf{b}}_3$ to the required torques. We do not derive that here, but we flag it as the tool we will need for two things: generating dynamically feasible aggressive trajectories rather than geometric curves the vehicle cannot fly, and turning the qualitative realizability argument into a computable one.
 ---
  
-## How far is horizontal motion from the controls? The relative-degree ladder
- 
-Entry 00 and the tilt check both gestured at the idea that horizontal motion is "one step removed" from what we control. It is worth counting the steps precisely, because the count is the quantity our criterion depends on, and because the count *changes with the injection point*, which is the whole thesis.
- 
-Differentiate a world-frame position component and see how many derivatives it takes before a control input appears explicitly.
- 
-**Vertical channel, from thrust.** $z \to \dot z = v_z \to \ddot v$ contains $T$. Two differentiations. **Relative degree 2 from T.**
- 
-**Lateral channel, from body torque.** $x \to v_x \to \dot v_x$ contains $\mathbf{b}_3$, which is orientation, not an input. Differentiate again: $\dot{\mathbf{b}}_3$ depends on the angular velocity $\boldsymbol{\omega}$, still not an input. Differentiate once more: $\dot{\boldsymbol{\omega}}$ contains the torque $\boldsymbol{\tau}$. Four differentiations. **Relative degree 4 from τ.**
- 
-The same physical channel, entered at different interfaces, gives a different count:
- 
-| Injection point | Steps to lateral position | Steps to vertical position |
+## How far is horizontal motion from the controls? Plant structure versus injection point
+
+Entry 00 and the tilt check both gestured at the idea that horizontal motion is "one step removed" from what we control. It is worth counting the steps precisely. Two different questions are easy to blur here, and keeping them apart is the point of this section:
+
+1. **Plant structure.** How many integrators sit between a *plant input* and an output? This is a property of the vehicle.
+2. **Injection point.** Where does a correction enter the control loop, and what does it pass through before it reaches the plant input? This is a property of the control architecture.
+
+### (a) Plant structure: integrators from each plant input
+
+Differentiate a world-frame position component and see how many derivatives it takes before an input appears.
+
+**Vertical channel, from collective thrust.** $z \to \dot z = v_z \to \dot v_z$ contains $T$. Two differentiations.
+
+**Lateral channel, from body torque.** $x \to v_x \to \dot v_x$ contains $\mathbf{b}_3$, which is orientation, not an input. Differentiate again: $\dot{\mathbf{b}}_3$ depends on the angular velocity $\boldsymbol{\omega}$, still not an input. Differentiate once more: $\dot{\boldsymbol{\omega}}$ contains the torque $\boldsymbol{\tau}$. Four differentiations.
+
+**A precision we owe the reader.** The count "4 from torque" is exact in the **linearization about hover**, which is where entry 04 computes it: there $\ddot x = g\,\delta\theta$ does not involve $\delta T$ at all. In the full nonlinear model it needs a qualification. With the rotor thrusts as inputs, $(T, \boldsymbol\tau)$ is an invertible function of the input, and $\ddot x = (T/m)\,b_{3,x}(\mathbf q)$ already contains the input $T$ at the **second** derivative. Its coefficient $b_{3,x}/m$ vanishes at hover but not when tilted. The matrix that multiplies the inputs at the second derivative of $(x, y, z)$ has rank 1 (only the $T$ column is non-zero). So the nonlinear system with thrust inputs has **no well-defined vector relative degree**. The standard remedy is dynamic extension: treat $T$ as a state and $\ddot T$ as an input. Then the outputs $(x, y, z, \psi)$ have vector relative degree $(4, 4, 4, 2)$, and the decoupling matrix is invertible whenever $T > 0$. Mistler, Benallegue and M'Sirdi (IEEE RO-MAN 2001, DOI 10.1109/ROMAN.2001.981968) give this construction for the quadrotor, and [checks/check_02_translational.py](checks/check_02_translational.py) verifies it. For our purposes the conclusion is the same: lateral position is four integrations from the torque. But the statement is a property of the *linearized* chain, and the nonlinear version goes through the extended system.
+
+**Motor lag adds one more step.** Entry 01 places the motor lag in the nominal model, so the true plant input is the *commanded* thrust. A first-order lag is not an integrator, but it does add one order (one pole) between the command and the delivered thrust. From the commanded thrusts, the linearized chain to lateral position has order 5, and to height order 3.
+
+| Plant input | Order to lateral position (hover linearization) | Order to height |
 |---|---|---|
-| Rotor thrusts / body torque | 4 | 2 |
-| Body-rate command (perfect inner loop assumed) | 3 | 2 |
-| Attitude / thrust-direction command | 2 | 2 |
-| Acceleration reference | 2 | 2 |
-| Position reference (over the MPC horizon) | 0 | 0 |
- 
-Read that table as the compressed form of our central claim. A correction that is a lateral force error is **four integrations away** from a torque-level injection point and **zero** away from a reference-level one. Nothing about the accuracy of the learned model changes between those two rows. What changes is how many integrations, each with its own rate and magnitude bound, sit between the correction and the thing it is trying to fix, and therefore whether the correction can be produced *within the horizon that matters*. The abstract's claim about a relative-degree-3 lateral effect at a body-rate feedforward interface is the third row of this table, and it is now derived rather than asserted.
- 
-Two caveats we record honestly. First, relative degree is a necessary structural quantity, not a sufficient one: a low relative degree does not make a correction realizable if the required wrench falls outside entry 01's polytope. Realizability needs both the count and the bound. Second, this ladder is computed about a hover-adjacent condition; the counts are structural and do not change with tilt, but the *gains* along each step do, which is why the criterion has to be evaluated online rather than tabulated once.
+| Commanded rotor thrusts (lag in the nominal model) | 5 (4 integrators + motor lag) | 3 (2 integrators + motor lag) |
+| Delivered rotor thrusts / body torque and collective thrust | 4 | 2 |
+| Body-rate command, *if* a perfect rate loop is assumed | 3 | 2 |
+| Attitude / thrust-direction command, *if* a perfect attitude loop is assumed | 2 | 2 |
+| Acceleration command, *if* a perfect acceleration loop is assumed | 2 | 2 |
+
+The last three rows are idealizations: each assumes a loop that delivers its command instantly. Our model assumes none of them. They are listed because the earlier study injected a correction at the body-rate level (the third row), and because published residual methods often inject at the attitude or acceleration level.
+
+### (b) Injection points: what the correction passes through
+
+A **reference is not a plant input.** Whatever reference the MPC receives, the vehicle still realizes it through the same commanded thrusts and the same chain in table (a). A reference-level correction therefore does not "skip" any integrators. An earlier version of this entry listed it at "0 integrations", and that was wrong. What changes between injection points is not the plant's integrator count. It is three other things:
+
+1. **Who computes the plant input.** A correction added *after* the optimizer (a post-solve feedforward on thrust, torque or body rate) reaches the rotors directly. It bypasses the input constraints, and it ignores what the MPC knows about the chain. A correction added to the *reference* is turned into inputs *by the constraint-aware MPC*, which plans the whole chain under the rotor box and rate limits.
+2. **Preview.** A reference correction is visible over the whole prediction horizon, so the MPC can start the rotate-then-translate manoeuvre early. A post-solve feedforward acts only at the current step. *(Qualified by entry 06: the primary MPC holds the reference constant over its horizon, so it sees the current correction over the horizon, but not future changes of it. Full preview of a changing correction needs the trajectory formulation deferred to entry 08.)*
+3. **The transfer to the output.** A post-solve correction reaches the output through the plant, $G(s)$, with no feedback shaping. A reference correction reaches it through the closed loop's reference-to-output map $T_{ry}$. That map has finite bandwidth; its DC gain is close to 1, and exactly 1 if the MPC is offset-free. Under saturation it becomes a nonlinear map. The realizability ratio (entry 09) and the loop-gain bound (entry 10) are computed on this transfer, not on an integrator count.
+
+| Injection point | Input computed by | Input constraints respected? | Preview over horizon? | Transfer from correction to output |
+|---|---|---|---|---|
+| Post-solve thrust / torque feedforward | adder after the MPC | no | no | plant $G$, open loop |
+| Post-solve body-rate feedforward (earlier study) | adder after the MPC (through a rate loop) | no | no | rate loop then plant, open loop |
+| Learned residual inside the MPC's prediction model | the MPC | yes | yes | depends on the learned model; changes the controller itself |
+| Shift of the MPC's reference (**this project**) | the MPC (unchanged) | yes | yes | closed-loop $T_{ry}$ |
+
+So the thesis sentence is this: **every injection point uses the same plant chain. What differs is whether the correction passes through the constraint-aware optimizer, with preview, and through which closed-loop transfer.** Accuracy of the learned model does not enter this table at all. That is why the same accurate correction can help at one injection point and hurt at another. It is also why a reference-level correction can still hurt: $T_{ry}$ has limited bandwidth and limited phase margin, and a state-dependent correction closes a loop around it (entry 10).
+
+Two caveats we record honestly. First, the chain order is a necessary structural quantity, not a sufficient one: a short chain does not make a correction realizable if the required wrench falls outside entry 01's polytope. Realizability needs both the structure and the bound. Second, the orders are structural and do not change with tilt, but the *gains* along each step do, which is why the criterion has to be evaluated online rather than tabulated once.
  
 ---
  
@@ -150,7 +174,7 @@ Two caveats we record honestly. First, relative degree is a necessary structural
  
 $$\dot{\mathbf{p}} = \mathbf{v}, \qquad \dot{\mathbf{v}} = \frac{T}{m}\,\mathbf{b}_3(\mathbf{q}) - g\,\mathbf{e}_3, \qquad \mathbf{b}_3(\mathbf{q}) = \mathbf{R}(\mathbf{q})\mathbf{e}_3$$
  
-These describe how six of the thirteen state numbers, position and velocity, evolve in time. Also committed: the inversion giving $T_{\text{req}}$ and $\mathbf{b}_3^{\text{req}}$ from a desired acceleration, the coordinated-tilt relation $a_{\text{lat}} = g\tan\theta$ with its $1/\cos\theta$ thrust cost, and the relative-degree ladder above.
+These describe how six of the thirteen state numbers, position and velocity, evolve in time. Also committed: the inversion giving $T_{\text{req}}$ and $\mathbf{b}_3^{\text{req}}$ from a desired acceleration, the coordinated-tilt relation $a_{\text{lat}} = g\tan\theta$ with its $1/\cos\theta$ thrust cost, and the two tables above. These are (a) the plant's chain orders in the hover linearization, with the dynamic-extension qualification for the nonlinear model, and (b) the injection-point comparison, in which a reference shift leaves the plant chain unchanged and differs only in who computes the input, in preview, and in the closed-loop transfer.
  
 **Sign convention recorded.** Positive pitch about body y is nose down and tilts thrust toward positive world x, which is the FLU consequence of entry 00's convention and the opposite of the NED/FRD habit.
  
@@ -159,7 +183,7 @@ These describe how six of the thirteen state numbers, position and velocity, evo
 **Deferred, noted, not forgotten.**
 - Drag enters this equation, when we add it, as a third term on the right-hand side, $-\tfrac{1}{m}\mathbf{R}\mathbf{D}\mathbf{R}^{\top}\mathbf{v}$ for rotor drag or a speed-dependent term for body drag. We record the slot now so that the perturbation phase is an addition to a known equation rather than a rewrite of it.
 - Full differential flatness, which is this entry's inversion carried further, to be derived when we need feasible aggressive trajectories.
-- **Integration and discretization hygiene**, which belongs to the simulator entry but is flagged here because it will contaminate our experiments if left implicit. The plant will be integrated with a fixed-step RK4 at a small step; the MPC will carry its own, coarser discrete model. The gap between the two is itself a form of model mismatch, and it adds to every perturbation we inject. We will measure the pure-discretization tracking error at zero perturbation and report it as the noise floor, so that no perturbation effect smaller than it is ever claimed as a result. We will also verify the integrator numerically by halving the step and confirming the error falls by roughly a factor of sixteen, which is the signature of genuine fourth-order accuracy and the cheapest way to catch an accidental Euler step.
+- **Integration and discretization hygiene**, the subject of entry 05, flagged here because it will contaminate our experiments if left implicit. The plant will be integrated with a fixed-step RK4 at a small step; the MPC will carry its own, coarser discrete model. The gap between the two is itself a form of model mismatch, and it adds to every perturbation we inject. We will measure the pure-discretization tracking error at zero perturbation and report it as the noise floor, so that no perturbation effect smaller than it is ever claimed as a result. We will also verify the integrator numerically by halving the step and confirming the error falls by roughly a factor of sixteen, which is the signature of genuine fourth-order accuracy and the cheapest way to catch an accidental Euler step.
 **Open for the next entry (03, rotational dynamics).** We have the translational half, and we now know precisely what it demands of the rotational half: a thrust direction $\mathbf{b}_3^{\text{req}}$ that the orientation must be steered to. Entry 03 completes the equations of motion by deriving how the orientation quaternion and the body angular velocity change over time, using the torques from entry 01, and writes out R(q) explicitly since it is built directly from the quaternion evolved there. With both halves in hand we will have the full rate of change of all thirteen states, which is everything needed to predict the drone's motion.
  
-*This entry is locked. We do not proceed to 03 until the following can be explained in plain language: why the thrust must be rotated by R(q) while gravity is not, why the equation forces T = mg at hover, why positive pitch is nose down in our convention, why a desired acceleration splits into a magnitude request and a direction request with different feasibility characters, and what the relative-degree ladder is counting.*
+*This entry is locked. We do not proceed to 03 until the following can be explained in plain language: why the thrust must be rotated by R(q) while gravity is not, why the equation forces T = mg at hover, why positive pitch is nose down in our convention, why a desired acceleration splits into a magnitude request and a direction request with different feasibility characters, what the chain-order table counts and why it holds exactly only in the hover linearization, and why a reference-level correction does not shorten the plant chain but changes who computes the input, the preview, and the transfer to the output.*

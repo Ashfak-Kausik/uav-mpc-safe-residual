@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 results/
+
+# Private manuscript folder: its own private git repository, never part of this public repo
+Manuscript/
