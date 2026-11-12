@@ -16,8 +16,10 @@ for k, v in D.items():
 # Sources (transcribed in 99_audit.md section E)
 c_FO, c_FW, c_FWlegacy, c_RP = 0.005964552, 0.0069928948992470565, 0.007350862856566459, 7.8e-10 / 2.3e-8
 
-rep.check("committed values are the FW 2.1+ constants (m 0.029, arm 0.046, f_max 0.12, c_tf 0.006993)",
-          (P.m, P.arm, P.f_max) == (0.029, 0.046, 0.12) and abs(P.c_tf - c_FW) < 1e-15)
+rep.check("committed values are the FW 2.1+ constants (m 0.029, arm 0.046, f_max 0.12, f_min 0.012818, c_tf 0.006993)",
+          (P.m, P.arm, P.f_max) == (0.029, 0.046, 0.12) and abs(P.c_tf - c_FW) < 1e-15
+          and P.f_min == 0.012817578393224994)
+rep.check("f_min is 18 % of hover thrust (not negligible)", abs(D["f_min/f_hover"] - 0.18) < 0.005)
 rep.check("TWR = 1.69 (< 2: ceiling-limited, entry 04)", abs(D["TWR"] - 1.69) < 0.005 and D["TWR"] < 2)
 rep.check("motor time constant from FO eq. 3.16 = 0.065 s (eq. 3.15: 0.077 s)",
           abs(P.tau_m - 0.0647) < 5e-4 and abs(P.tau_m_alt - 0.0775) < 5e-4)

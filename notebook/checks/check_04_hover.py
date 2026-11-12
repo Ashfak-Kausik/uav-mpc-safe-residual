@@ -101,8 +101,38 @@ quoted = {
 }
 for k, (val, tol) in quoted.items():
     rep.check(f"entry 04 quotes {k} = {val}", abs(D[k] - val) <= tol, f"computed {D[k]:.4g}")
-rep.check("TWR < 2: hover torque authority is ceiling-limited, = 69 % of the floor-limited value",
-          D["TWR"] < 2 and abs(D["tau_x,max hover [N m]"] / D["tau_x,max if floor-limited [N m]"] - 0.69) < 0.005)
+# Authority with the firmware thrust floor f_min (fix after STEP 2 review), checked against exact LPs
+from scipy.optimize import linprog
+Mn = np.array(mixer(P.a, P.c_tf).evalf(), dtype=float)
+
+
+def lp_tau_x(fmax, fmin, mass):
+    r = linprog(-Mn[1], A_eq=Mn[[0, 2, 3]], b_eq=[mass * gg, 0, 0], bounds=[(fmin, fmax)] * 4, method="highs")
+    return -r.fun
+
+
+tau_lp = lp_tau_x(P.f_max, P.f_min, P.m)
+tau_floor = lp_tau_x(1e3, P.f_min, P.m)      # ceiling removed: floor-limited value
+rep.check("LP: hover roll authority = a(4 f_max - m g) (ceiling-limited) with f_min = THRUST_MIN",
+          abs(tau_lp - P.a * (4 * P.f_max - P.m * gg)) < 1e-12 and abs(tau_lp - D["tau_x,max hover [N m]"]) < 1e-12)
+rep.check("LP: authority is 84 % of the floor-limited value a(m g - 4 f_min)",
+          abs(tau_lp / tau_floor - 0.84) < 0.005, f"{tau_lp / tau_floor:.3f}")
+# knee: the TWR at which ceiling and floor bind together
+knee = None
+for twr in np.linspace(1.5, 2.2, 7001):
+    fmax_t = twr * P.m * gg / 4
+    if lp_tau_x(fmax_t, P.f_min, P.m) >= P.a * (P.m * gg - 4 * P.f_min) - 1e-12:
+        knee = twr
+        break
+rep.check("LP: authority knee at TWR = 2 - f_min/f_hover = 1.82 (not 2)",
+          knee is not None and abs(knee - 1.82) < 0.002 and abs(D["TWR knee = 2 - f_min/f_hover"] - 1.82) < 0.002, f"LP knee {knee:.4f}")
+rep.check("vehicle is ceiling-limited but within 0.13 of the knee (TWR 1.69 < 1.82)",
+          D["TWR"] < knee and knee - D["TWR"] < 0.14)
+# max downward acceleration inside the box: all rotors at f_min (LP: minimise total thrust)
+r = linprog(Mn[0], A_eq=Mn[[1, 2, 3]], b_eq=[0, 0, 0], bounds=[(P.f_min, P.f_max)] * 4, method="highs")
+a_down = gg - r.fun / P.m
+rep.check("LP: max downward acceleration inside the box = g - 4 f_min/m = 8.0 m/s^2 (not g)",
+          abs(a_down - 8.04) < 0.005 and abs(a_down - D["a_down,max in box [m/s^2]"]) < 1e-9, f"{a_down:.3f}")
 
 # Motor lag in the nominal model: transfer functions with the lag pole (entry 04 table)
 tau = sp.symbols("tau_m", positive=True)

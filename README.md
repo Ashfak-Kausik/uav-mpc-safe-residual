@@ -218,6 +218,7 @@ Current:
 ```
 uav-mpc-safe-residual/
 ├── README.md
+├── requirements.txt            pinned Python packages for notebook/checks
 └── notebook/
     ├── 00_state_and_frames.md
     ├── 01_forces_and_torques.md
@@ -231,6 +232,14 @@ uav-mpc-safe-residual/
 ```
 
 The notebook is the single source of truth for every technical statement; this README summarises it.
+
+To run the derivation checks from a fresh clone (Python 3.13 was used):
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip install -r requirements.txt
+cd notebook/checks && ../../.venv/bin/python run_all.py
+```
 
 Planned, added as each phase begins:
 
@@ -263,7 +272,7 @@ These are tracked here so that they are settled by evidence and not by assumptio
 - In its first version the small-gain bound uses a fixed mismatch set, so it is a constant. How conservative is it, and how much does narrowing the set online recover?
 - The realizability ratio is exact only for the linearized MPC. Its error on aggressive trajectories, and against the exact linear-program answer, needs to be measured.
 - The map from predicted mismatch to reference shift still needs a full derivation (notebook 08).
-- The vehicle's maximum thrust (thrust-to-weight ratio 1.69 from the firmware, against up to about 2.5 in other sources) must be re-identified on a bench. Below 2 the vehicle's torque authority is limited by the rotor ceiling, so saturation is active more often.
+- The vehicle's maximum thrust (thrust-to-weight ratio 1.69 from the firmware, against up to about 2.5 in other sources) must be re-identified on a bench, under the flight firmware's thrust configuration, together with the motor time constant. With the firmware's thrust floor, the authority knee sits at a thrust-to-weight ratio of 1.82. Below it, as now, torque authority is limited by the rotor ceiling (84 % of the floor-limited value), so saturation is active more often. The bench test may move the vehicle across the knee.
 - Non-degradation is guaranteed only in expectation over the training distribution. How does the learned policy behave under a shifted distribution?
 
 ---

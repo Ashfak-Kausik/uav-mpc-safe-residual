@@ -1,0 +1,5 @@
+# Theory phase: only what notebook/checks/ needs. Grows per phase. CPU only.
+numpy==2.5.4
+scipy==1.18.1
+sympy==1.14.0
+mpmath==1.3.0

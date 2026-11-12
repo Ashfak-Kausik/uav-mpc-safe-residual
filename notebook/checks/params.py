@@ -12,8 +12,11 @@ g = 9.81                       # m/s^2
 m = 0.029                      # kg, FW CF_MASS                       (to be weighed on arrival)
 arm = 0.046                    # m,  FW ARM_LENGTH (centre to rotor)
 a = arm / np.sqrt(2)           # m,  effective moment arm, entry 01
-f_max = 0.12                   # N,  FW THRUST_MAX, 2.1+ props         (bench re-identification)
-f_min = 0.0                    # N,  assumed                           (bench re-identification)
+f_max = 0.12                   # N,  FW THRUST_MAX, 2.1+ props: a firmware cap for thrust consistency over
+                               #     battery discharge, not the full-battery physical maximum (bench re-identification)
+f_min = 0.012817578393224994   # N,  FW THRUST_MIN, 2.1+ props (CONFIG_ENABLE_THRUST_BAT_COMPENSATED, default y).
+                               #     motors.c sends commands below it to ZERO (motor off), so the true per-rotor set is
+                               #     {0} U [f_min, f_max]; the MPC uses the convex box [f_min, f_max]   (bench re-identification)
 c_tf = 0.0069928948992470565   # m,  FW THRUST2TORQUE, 2.1+ props
 
 # FO Appendix A, full inertia matrix (Crazyflie 2.0). Plant uses the full matrix, MPC the diagonal.
@@ -49,7 +52,11 @@ def derived():
     d["tau_m [s]"] = tau_m
     d["tau_m/t_att"] = tau_m / d["t_att [s]"]
     d["tau_x,max hover [N m]"] = a * min(4 * f_max - m * g, m * g - 4 * f_min)
-    d["tau_x,max if floor-limited [N m]"] = a * m * g
+    d["tau_x,max if floor-limited [N m]"] = a * (m * g - 4 * f_min)
+    d["ceiling/floor authority ratio"] = (4 * f_max - m * g) / (m * g - 4 * f_min)
+    d["f_min/f_hover"] = f_min / (m * g / 4)
+    d["TWR knee = 2 - f_min/f_hover"] = 2 - d["f_min/f_hover"]
+    d["a_down,max in box [m/s^2]"] = g - 4 * f_min / m
     d["tau_z,max hover [N m]"] = c_tf * min(4 * f_max - m * g, m * g - 4 * f_min)
     d["yaw/roll angular-accel ratio"] = (d["tau_z,max hover [N m]"] / I_diag[2, 2]) / (d["tau_x,max hover [N m]"] / I_diag[0, 0])
     d["a_up,max [m/s^2]"] = g * (d["TWR"] - 1)

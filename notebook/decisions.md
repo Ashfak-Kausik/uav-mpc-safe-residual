@@ -57,6 +57,12 @@ The source of every parameter is recorded in entry 01. $f_{\max}$ and the thrust
 
 **Caveat.** The inertia and motor lag were identified on the 2.0 airframe, and the thrust and torque constants are for the 2.1+. The cross-source TWR spread (1.69 to about 2.5) straddles the authority knee at TWR = 2.
 
+> **Amendment to Q5 (2026-11-12, after the STEP 2 review).** The text above is kept as recorded; this amendment supersedes it where they differ.
+> - **Thrust floor.** $f_{\min}$ is the firmware's `THRUST_MIN` = 0.012817578393224994 N per rotor (2.1+ props), not 0. It is active by default (`CONFIG_ENABLE_THRUST_BAT_COMPENSATED`, `default y`). Commands below it switch the motor off (`motors.c`), so the true per-rotor set is $\{0\}\cup[f_{\min}, f_{\max}]$, and the MPC uses the convex box $[f_{\min}, f_{\max}]$.
+> - **Corrected consequence.** The authority knee is at TWR = $2 - f_{\min}/f_{\text{hover}}$ = 1.82, not 2. At TWR = 1.69 the vehicle is still ceiling-limited, but closer to the knee: torque authority is **84 percent** of the floor-limited value (not 69 percent), and the maximum downward acceleration inside the box is $g - 4f_{\min}/m$ = 8.0 m/s² (not $g$). The bench re-identification can therefore move the vehicle across the knee.
+> - **`THRUST_MAX` is a firmware cap.** The value 0.12 N is chosen for thrust consistency over battery discharge, not the full-battery physical maximum. The bench test must run under the same firmware thrust configuration as flight.
+> - **$\tau_m$ is added to the bench re-identification list.** At $\tau_m/t_{\text{att}} = 1.53$ it is the highest-leverage parameter, and its value comes from a single-pole fit on the 2.0.
+
 ### Q6. The notebook is the single source of truth.
 
 **Decision.** The notebook is the single source of truth for every technical statement. The README and any proposal or paper drafts are derived documents and must not contradict it. When they disagree, the notebook wins and the derived document is corrected. The October 2026 proposal is a frozen, dated artifact. [project_details.md](project_details.md) is superseded and carries a banner; it is kept for history only.

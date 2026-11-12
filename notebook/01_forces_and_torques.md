@@ -225,7 +225,7 @@ This section exists because our contribution is about what a correction can actu
 
 $$f_{\min} \le f_i \le f_{\max}, \qquad f_{\min} \ge 0, \qquad i = 1,\dots,4 .$$
 
-The upper bound is the obvious one. **The lower bound is the one that is easy to forget.** Fixed-pitch propellers spinning in one direction can only push; a rotor cannot pull the airframe down. So the input set is a box in the positive orthant, not a symmetric box about zero. In the derivations that follow we take $f_{\min} = 0$. On a real vehicle the motors are usually kept at a small positive idle thrust in flight, which raises $f_{\min}$ and shrinks the set further. Förster's thrust map for the 2.0 has an offset of $5.5\times10^{-4}$ N at zero command (under 1 percent of hover thrust). Entry 04 gives the authority formulas for general $f_{\min}$, so the bench test can set it later without rederivation.
+The upper bound is the obvious one. **The lower bound is the one that is easy to forget.** Fixed-pitch propellers spinning in one direction can only push; a rotor cannot pull the airframe down. So the input set is a box in the positive orthant, not a symmetric box about zero. The derivations keep $f_{\min}$ general. For our vehicle it is the firmware's thrust floor, $f_{\min} = 0.0128$ N per rotor (18 percent of hover thrust), and the parameter table below explains what the firmware actually does there. Entry 04 gives the authority formulas for general $f_{\min}$, so the bench test can change it without rederivation.
 
 With motor lag in the nominal model, these limits apply to the **commanded** thrusts. The delivered thrusts, being first-order filtered versions of commands inside the box, stay inside the same box automatically.
 
@@ -280,24 +280,28 @@ Sources (all verified, see [99_audit.md](99_audit.md), sections D and E):
 | Mass | $m$ | 0.029 kg | FW `CF_MASS` | weigh on arrival |
 | Arm, centre to rotor | $l$ | 0.046 m | FW `ARM_LENGTH` (FO: 0.092 m between opposite motors) | fixed |
 | Effective moment arm | $a = l/\sqrt2$ | 0.0325 m | derived | — |
-| Max thrust per rotor | $f_{\max}$ | 0.12 N | FW `THRUST_MAX`, 2.1+ props | **re-identify by bench test** |
-| Min thrust per rotor | $f_{\min}$ | 0 N | assumption (FO 2.0 offset $5.5\times10^{-4}$ N) | **re-identify by bench test** |
+| Max thrust per rotor | $f_{\max}$ | 0.12 N | FW `THRUST_MAX`, 2.1+ props: a firmware cap, see below | **re-identify by bench test** |
+| Min thrust per rotor | $f_{\min}$ | 0.0128 N (= 0.012817578393224994) | FW `THRUST_MIN`, 2.1+ props, see below | **re-identify by bench test** |
 | Thrust map (command → thrust) | — | not needed while $f$ is the input | FO gives it for the 2.0 | **re-identify by bench test** |
 | Torque-to-thrust ratio | $c_{\tau f}$ | 0.00699 m | FW `THRUST2TORQUE`, 2.1+ props | — |
 | Inertia (plant) | $\mathbf{I}$ | FO full matrix: diagonal (16.57, 16.66, 29.26) × 10⁻⁶ kg·m², off-diagonal up to 1.80 × 10⁻⁶ | FO | 2.0 airframe |
 | Inertia (MPC model) | $\mathbf{I}_{\text{nom}}$ | diagonal of the above | FO | deliberate idealization, entry 03 |
-| Motor time constant | $\tau_m$ | 0.065 s (alternative series: 0.077 s) | derived from FO eq. 3.16 (3.15) | 2.0 motors |
+| Motor time constant | $\tau_m$ | 0.065 s (alternative series: 0.077 s) | derived from FO eq. 3.16 (3.15), single-pole fit | 2.0 motors; **re-identify by bench test** |
 | Rotor drag | $d_{x}, d_y$ | ≈ 7 × 10⁻³ N·s/m at hover | derived from FO $\mathbf{K}_{\text{aero}}$ | order of magnitude |
 | Command rate limit | $\delta_{\max}$ | — | design choice | entry 06 |
 
-Derived groups (computed in [checks/params.py](checks/params.py)): **TWR = 4 f_max/(m g) = 1.69**, $c_{\tau f}/a = 0.215$, $I_{zz}/I_{xx} = 1.77$.
+Derived groups (computed in [checks/params.py](checks/params.py)): **TWR = 4 f_max/(m g) = 1.69**, $f_{\min}/f_{\text{hover}} = 0.18$, $c_{\tau f}/a = 0.215$, $I_{zz}/I_{xx} = 1.77$.
+
+**What the firmware's two thrust limits mean.** Both are verified in the Bitcraze firmware (`platform_defaults_cf2.h`, `motors.c`, `stabilizer.c`, top-level `Kconfig`; checked 2026-11-12).
+- **`THRUST_MAX` = 0.12 N is a firmware cap, not the motor's physical maximum.** The header's own comment says the value is "a trade-off between consistency of thrust over all battery levels and maximum performance with a full battery". The firmware scales commands so that a given command produces about the same thrust at any battery voltage, and caps them at the thrust it can still deliver on a drained battery. A full battery can push harder. **The bench test must therefore run under the same firmware thrust configuration as flight** (battery compensation on, 2.1+ propeller setup). Otherwise it measures a different $f_{\max}$ from the one the controller will meet.
+- **`THRUST_MIN` = 0.0128 N is a cutoff.** Both limits are defined only under `CONFIG_ENABLE_THRUST_BAT_COMPENSATED`, which is `default y` for the Crazyflie 2.x. Its propeller setup defaults to `CRAZYFLIE_21_PLUS`, and the normal flight loop applies the compensation on every iteration (`stabilizer.c`, `batteryCompensation`). In `motorsCompensateBatteryVoltage` (`motors.c`), a command below `THRUST_MIN` returns **zero**: the motor is switched off, not held at the minimum. So the true per-rotor set is **non-convex**: $\{0\} \cup [f_{\min}, f_{\max}]$. The MPC uses the convex box $[f_{\min}, f_{\max}]$, which is a conservative restriction. It gives up only the option of switching a motor off, which no tracking manoeuvre should rely on. At 18 percent of hover thrust, $f_{\min}$ is not negligible. Entry 04 shows that it moves the authority knee from TWR = 2 to 1.82.
 
 **Cross-source spread, recorded as uncertainty.**
 - Mass: 27 g (Menagerie), 28 g (FO), 29 g (FW), 30 g (RP).
-- Maximum thrust: 0.12 N (FW, 2.1+ props), ≈ 0.15 N (FO, 2.0 props), 0.18 N (FW, thrust-upgrade kit). That is a TWR between 1.69 and about 2.5. Entry 04 shows that TWR = 2 is the boundary between two saturation regimes, so this spread matters. It is why $f_{\max}$ is the first number to re-identify.
+- Maximum thrust: 0.12 N (FW, 2.1+ props), ≈ 0.15 N (FO, 2.0 props), 0.18 N (FW, thrust-upgrade kit). That is a TWR between 1.69 and about 2.5. Entry 04 shows that $\text{TWR} = 2 - f_{\min}/f_{\text{hover}} = 1.82$ is the boundary between two saturation regimes, so this spread matters. It is why $f_{\max}$ is the first number to re-identify.
 - $c_{\tau f}$: 0.00597 m (FO), 0.00699 (FW 2.1+), 0.00735 (FW legacy props), 0.0339 m (RP, rejected, see below).
 
-Two caveats are deliberate and stated here so that they are never forgotten. **The inertia and the motor lag come from the 2.0, the thrust and torque constants from the 2.1+.** The airframes are close but not identical. A bench test on the purchased vehicle will re-identify $f_{\max}$, the thrust map and, if possible, $\tau_m$, and this table will then change.
+Two caveats are deliberate and stated here so that they are never forgotten. **The inertia and the motor lag come from the 2.0, the thrust and torque constants from the 2.1+.** The airframes are close but not identical. A bench test on the purchased vehicle, under the flight firmware's thrust configuration, will re-identify $f_{\max}$, $f_{\min}$, the thrust map and **$\tau_m$**, and this table will then change. Of these, $\tau_m$ has the highest leverage. It is 1.53 times the attitude time scale (entry 04), it sits in the nominal model (decision Q1), and its current value is a single-pole fit on a different vehicle version.
 
 ---
 
@@ -328,7 +332,7 @@ For the main cross-simulator check we **override RotorPy's $c_{\tau f}$ with our
 - The control input is the vector of four **commanded** rotor thrusts. The delivered thrusts follow them through a first-order lag on thrust with time constant $\tau_m$, which is part of the nominal model (decision Q1).
 - The rotor-to-wrench map is the matrix $\mathbf{M}$ above, which is invertible with the closed-form inverse given. Positive $\tau_y$ is nose down.
 - The input constraint set is the per-rotor box $f_{\min} \le f^{\text{cmd}}_i \le f_{\max}$ with $f_{\min} \ge 0$, and a per-step rate bound on the command. Its image in wrench space is a thrust-dependent polytope, and realizability is tested in rotor-thrust space, where that polytope is a box.
-- The vehicle is the Crazyflie 2.1+ with the cited parameter mix above: FW thrust and torque constants, FO inertia and motor lag. TWR = 1.69, $c_{\tau f}/a = 0.215$.
+- The vehicle is the Crazyflie 2.1+ with the cited parameter mix above: FW thrust limits and torque constant, FO inertia and motor lag. TWR = 1.69, $f_{\min}/f_{\text{hover}} = 0.18$, $c_{\tau f}/a = 0.215$. The MPC's input box is $[f_{\min}, f_{\max}]$, a convex restriction of the firmware's true set $\{0\}\cup[f_{\min}, f_{\max}]$.
 - The motor mapping M1–M4 → rotors 4, 3, 2, 1 is verified from the firmware.
 - The simulators are adapted to this model: the Menagerie model's actuation is replaced by our own interface. In RotorPy, $c_{\tau f}$ is overridden and the rotor order permuted, with one native-value run kept as a robustness check.
 
@@ -340,7 +344,7 @@ For the main cross-simulator check we **override RotorPy's $c_{\tau f}$ with our
 
 **Open, to be settled in later entries.**
 - Whether the *plant's* motor lag acts on thrust or on rotor speed (entry 07). The nominal model's lag acts on thrust.
-- The bench re-identification of $f_{\max}$, $f_{\min}$, the thrust map and, if possible, $\tau_m$ on the purchased 2.1+ (hardware phase). Until then, results are reported with the committed values and the TWR spread in mind.
+- The bench re-identification of $f_{\max}$, $f_{\min}$, the thrust map and $\tau_m$ on the purchased 2.1+ (hardware phase), under the flight firmware's thrust configuration. Until then, results are reported with the committed values and the TWR spread in mind.
 - The command rate limit $\delta_{\max}$ (entry 06).
 
 **Open for the next entry (02, translational dynamics).** We now have the forces and torques and we know they live in mixed frames, thrust in the body frame and gravity in the world frame, joined by the orientation. Entry 02 uses this to write the translational equations of motion: how the total force produces linear acceleration in the world frame once the body thrust is rotated in. Entry 03 then does the rotational half, taking the torques $\boldsymbol{\tau}$ produced by the map above and turning them into angular acceleration about the body axes.

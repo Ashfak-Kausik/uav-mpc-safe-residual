@@ -84,4 +84,15 @@ rep.check("committed c_tf/a = 0.215 (as quoted in entries 01 and 04)", abs(ratio
 rep.check("committed c_tf/a lies within the verified FO/FW source spread", min(src.values()) <= ratio <= max(src.values()))
 rep.check("old entry-04 value 1/15 is outside the verified spread (audit B-2 stays fixed)", not (min(src.values()) <= 1 / 15 <= max(src.values())))
 
+# Committed vehicle with the firmware floor f_min = THRUST_MIN: roll and yaw authority via LP
+Mc = np.array(mixer(P.a, P.c_tf).evalf(), dtype=float)
+for row, k, name in [(1, P.a, "roll"), (3, P.c_tf, "yaw")]:
+    others = [r for r in range(4) if r != row]
+    b = np.zeros(3)
+    b[0] = P.m * P.g
+    res = linprog(-Mc[row], A_eq=Mc[others], b_eq=b, bounds=[(P.f_min, P.f_max)] * 4, method="highs")
+    cf = k * min(4 * P.f_max - P.m * P.g, P.m * P.g - 4 * P.f_min)
+    rep.check(f"committed vehicle: {name} authority = {name == 'roll' and 'a' or 'c_tf'}*min(4f_max - mg, mg - 4f_min) (LP, f_min = THRUST_MIN)",
+              abs(-res.fun - cf) < 1e-12, f"{-res.fun:.4e} N m")
+
 raise SystemExit(rep.finish())
