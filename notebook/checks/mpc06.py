@@ -1,4 +1,4 @@
-"""Entry 06: the nominal MPC for tracking (design constants, condensed QP, closed-loop analysis).
+﻿"""Entry 06: the nominal MPC for tracking (design constants, condensed QP, closed-loop analysis).
 
 Shared by check_06_nominal_mpc.py and later entries (08-10). All parameters come from params.py
 and linmodel.py; the design choices are justified in 06_nominal_mpc.md.
@@ -29,6 +29,7 @@ Pm, K = lqr(Ad, Bd, Q, R)
 T_OFF = 100.0 * (G.T @ Pm @ G)                           # offset cost on the artificial steady state
 Kx, Kr, S_th = tracking_law(Pm, K, T_OFF)
 A_LAG = np.exp(-DT / P.tau_m)                            # nominal lag pole per period
+IMPL = "b"   # chosen implementation (entry 06 amendment): fixed one-step computation delay, modelled
 
 
 # ------------------------------------------------------------------ condensed QP
@@ -119,8 +120,23 @@ class CondensedQP:
 def solve_daqp(qp, x0, u_prev, r):
     import daqp
     f, bl, bu = qp.vectors(x0, u_prev, r)
-    z, fval, flag, info = daqp.solve(qp.H, f, qp.Acon, bu, bl)
+    z, fval, flag, info = daqp.solve(qp.H, f, qp.Acon, bu, bl, primal_tol=1e-9)
     return np.asarray(z), flag, info
+
+
+def kkt_residuals(qp, z, lam, x0, u_prev, r):
+    """KKT residuals of  min 1/2 z'Hz + f'z  s.t.  bl <= [I; Acon] z <= bu, with DAQP's convention
+    Hz + f + A' lam = 0, lam > 0 at active upper bounds, lam < 0 at active lower bounds.
+    Returns (primal violation [abs], stationarity [relative to the gradient scale], complementarity [abs])."""
+    f, bl, bu = qp.vectors(x0, u_prev, r)
+    A = np.vstack([np.eye(qp.nz), qp.Acon])
+    Az = A @ z
+    primal = max(0.0, (Az - bu).max(), (bl - Az).max())
+    grad = qp.H @ z + f
+    stat = np.abs(grad + A.T @ lam).max() / max(1.0, np.abs(f).max(), np.abs(qp.H @ z).max())
+    up, lo = lam > 0, lam < 0
+    comp = max(np.abs(lam[up] * (bu[up] - Az[up])).max(initial=0.0), np.abs(lam[lo] * (Az[lo] - bl[lo])).max(initial=0.0))
+    return primal, stat, comp
 
 
 class OSQPSolver:
@@ -159,23 +175,46 @@ def frac_delay_gammas(A, B, D):
     return Phi, Ga, expm(A * (1 - eps) * DT) @ Gb, d
 
 
-def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag):
-    """Linear closed loop: plant (true lag, delay D) + MPC law u = Kx [x_rigid; f_hat] + Kr r, where
-    f_hat is the controller's open-loop lag model driven by its own (undelayed) commands (thrust is not
-    measured on board). State: [x (16), f_hat (4), u_{k-1} ... u_{k-d-1} (4(d+1))]. Returns (Acl, Bcl_r)."""
+def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag, impl=None, extra=None):
+    """Linear closed loop: plant (true lag tau_true, injected delay D) + MPC law, with the delivered thrusts
+    estimated by the controller's own lag model (thrust is not measured on board).
+
+    impl = "a" (apply-on-solve): u_k = Kx [x_rigid,k; f_hat_k] + Kr r is applied at t_k (zero modelled
+        computation delay); f_hat_{k+1} = a f_hat_k + (1-a) u_k.
+    impl = "b" (fixed one-step computation delay, modelled): the command computed from x_k is applied at
+        t_{k+1}. The controller predicts x_hat_{k+1|k} = Phi [x_rigid,k; f_hat_k] + Gam u_{k-1} with the command
+        already in flight, then applies the same law to the prediction: u_k = Kx x_hat_{k+1|k} + Kr r;
+        f_hat_{k+1} = a f_hat_k + (1-a) u_{k-1}. The plant sees a total delay DT + D.
+    extra: optional (Phi_p, Gam_p) replacing the plant's ZOH matrices (used by entry 07 for mass and drag).
+    State: [x (16), f_hat (4), u_{k-1}, u_{k-2}, ... (buffer)]. Returns (Acl, Bcl_r)."""
+    impl = impl or IMPL
     A, B = plant_matrices(tau_true, I)
-    Phi, G0, G1, d = frac_delay_gammas(A, B, D)
-    nb = d + 1
+    D_plant = D + (DT if impl == "b" else 0.0)
+    Phi, G0, G1, d = frac_delay_gammas(A, B, D_plant)
+    if extra is not None:
+        Phi_e, Gam_e = extra
+        # same delay split, but with the perturbed plant: G0 + G1 = Gam_e; reuse the fractional split ratio
+        Phi = Phi_e
+        if np.allclose(G1, 0):
+            G0 = Gam_e
+        else:
+            raise NotImplementedError("extra plant matrices are only supported with integer total delay")
+    nb = d + 2
     n = NX + NU + NU * nb
     Kxr, Kxf = Kx[:, :12], Kx[:, 12:16]
-
-    def u_of(state_row_block):
-        pass
-
-    # u_k as a linear function of the closed-loop state z = [x, fhat, buf]: u_k = Fz z + Kr r
     Fz = np.zeros((NU, n))
-    Fz[:, :12] = Kxr
-    Fz[:, NX:NX + NU] = Kxf
+    if impl == "a":
+        Fz[:, :12] = Kxr
+        Fz[:, NX:NX + NU] = Kxf
+    else:
+        Phi_n, Gam_n = Ad, Bd
+        # x_hat = Phi_n [x_rigid; f_hat] + Gam_n u_{k-1};  u_k = Kx x_hat + Kr r
+        Sel = np.zeros((NX, n))
+        Sel[:12, :12] = np.eye(12)
+        Sel[12:16, NX:NX + NU] = np.eye(NU)
+        Ubuf0 = np.zeros((NU, n))
+        Ubuf0[:, NX + NU:NX + 2 * NU] = np.eye(NU)
+        Fz = Kx @ (Phi_n @ Sel + Gam_n @ Ubuf0)
     Acl = np.zeros((n, n))
     Bcl = np.zeros((n, NY))
     # plant: x+ = Phi x + G0 u_{k-d} + G1 u_{k-d-1}; buffer slot i holds u_{k-1-i}
@@ -190,10 +229,13 @@ def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag):
     Ub, Rb = u_delayed(d + 1)
     Acl[:NX] = np.hstack([Phi, np.zeros((NX, n - NX))]) + G0 @ Ua + G1 @ Ub
     Bcl[:NX] = G0 @ Ra + G1 @ Rb
-    # controller lag model: fhat+ = a fhat + (1 - a) u_k
+    # controller lag model: fhat+ = a fhat + (1 - a) u_applied (u_k for impl a, u_{k-1} for impl b)
     Acl[NX:NX + NU, NX:NX + NU] = A_LAG * np.eye(NU)
-    Acl[NX:NX + NU] += (1 - A_LAG) * Fz
-    Bcl[NX:NX + NU] = (1 - A_LAG) * Kr
+    if impl == "a":
+        Acl[NX:NX + NU] += (1 - A_LAG) * Fz
+        Bcl[NX:NX + NU] = (1 - A_LAG) * Kr
+    else:
+        Acl[NX:NX + NU, NX + NU:NX + 2 * NU] += (1 - A_LAG) * np.eye(NU)
     # buffer shift: slot0+ = u_k, slot i+ = slot i-1
     Acl[NX + NU:NX + 2 * NU] = Fz
     Bcl[NX + NU:NX + 2 * NU] = Kr
@@ -206,23 +248,33 @@ def spectral_radius(Acl):
     return float(np.max(np.abs(np.linalg.eigvals(Acl))))
 
 
-def loop_at_plant_input(w, tau_true=P.tau_m):
-    """Loop gain L(e^{jw dt}) broken at the plant input (commanded thrusts), with the controller's
-    internal lag model: u = (I - Kxf F(z))^{-1} Kxr x_rigid, F(z) = (1 - a)/(z - a). Returned in
-    wrench coordinates (T, tau_x, tau_y, tau_z): L_w = MIX L MIX^{-1}; negative-feedback convention."""
+def loop_at_plant_input(w, tau_true=P.tau_m, impl=None):
+    """Loop gain L(e^{jw dt}) broken at the controller output (commanded thrusts), with the controller's
+    internal lag model. Returned in wrench coordinates (T, tau_x, tau_y, tau_z): L_w = MIX L MIX^{-1};
+    negative-feedback convention.
+    impl a: u = (I - Kxf F)^{-1} Kxr x_rigid,  F = (1 - a)/(z - a); plant driven by u without delay.
+    impl b: u = (I - Kx Phi_f F2 - Kx Gam z^-1)^{-1} Kx Phi_r x_rigid,  F2 = (1 - a)/(z (z - a));
+            plant driven by u delayed one period (computation)."""
+    impl = impl or IMPL
     A, B = plant_matrices(tau_true)
     Phi, Gam = zoh(A, B, DT)
     z = np.exp(1j * w * DT)
-    X = np.linalg.solve(z * np.eye(NX) - Phi, Gam)           # x per unit command
-    F = (1 - A_LAG) / (z - A_LAG) * np.eye(NU)
-    Cz = np.linalg.solve(np.eye(NU) - Kx[:, 12:16] @ F, Kx[:, :12])
-    L = -(Cz @ X[:12])
+    X = np.linalg.solve(z * np.eye(NX) - Phi, Gam)           # x per unit applied command
+    if impl == "a":
+        F = (1 - A_LAG) / (z - A_LAG) * np.eye(NU)
+        Cz = np.linalg.solve(np.eye(NU) - Kx[:, 12:16] @ F, Kx[:, :12])
+        L = -(Cz @ X[:12])
+    else:
+        F2 = (1 - A_LAG) / (z * (z - A_LAG)) * np.eye(NU)
+        Phi_r, Phi_f = Ad[:, :12], Ad[:, 12:16]
+        Cz = np.linalg.solve(np.eye(NU) - Kx @ Phi_f @ F2 - Kx @ Bd / z, Kx @ Phi_r)
+        L = -(Cz @ X[:12]) / z
     return MIX @ L @ np.linalg.inv(MIX)
 
 
-def channel_margins(n_freq=40000):
+def channel_margins(n_freq=40000, impl=None):
     ws = np.logspace(-1, np.log10(np.pi / DT * 0.9999), n_freq)
-    Ls = np.array([np.diag(loop_at_plant_input(w)) for w in ws])   # (n_freq, 4)
+    Ls = np.array([np.diag(loop_at_plant_input(w, impl=impl)) for w in ws])   # (n_freq, 4)
     out = {}
     for ch, name in enumerate(["collective", "roll", "pitch", "yaw"]):
         L = Ls[:, ch]
@@ -238,11 +290,15 @@ def channel_margins(n_freq=40000):
     return out
 
 
-def cliff(param, lo, hi, tol=1e-6):
-    """Bisection on spectral radius = 1 for closed_loop(**{param: value})."""
-    f = lambda v: spectral_radius(closed_loop(**{param: v})[0]) - 1
-    assert f(lo) < 0 < f(hi), (f(lo), f(hi))
-    while hi - lo > tol:
+def cliff(param, lo, hi, tol=1e-6, **kw):
+    """Bisection on spectral radius = 1 for closed_loop(**{param: value}, **kw)."""
+    f = lambda v: spectral_radius(closed_loop(**{param: v}, **kw)[0]) - 1
+    flo, fhi = f(lo), f(hi)
+    assert flo * fhi < 0, (flo, fhi)          # stable at one end, unstable at the other (either order)
+    while abs(hi - lo) > tol:
         mid = 0.5 * (lo + hi)
-        lo, hi = (mid, hi) if f(mid) < 0 else (lo, mid)
+        if (f(mid) < 0) == (flo < 0):
+            lo = mid
+        else:
+            hi = mid
     return 0.5 * (lo + hi)

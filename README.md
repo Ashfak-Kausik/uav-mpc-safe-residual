@@ -170,11 +170,11 @@ Notebook entry 04 classifies the four mismatches from an equilibrium analysis al
 | Motor-lag error | No, it removes phase margin | Lateral, at the entrance of a four-integrator chain | Hurts past a threshold; may weaken or vanish, since the identified lag is in the nominal model and the correction passes through the MPC | Threshold moves with the observer dynamics |
 | Delay | No, it removes phase margin faster | Lateral, at the entrance of a four-integrator chain | Hurts, with an earlier threshold | As lag error |
 
-With the nominal controller fixed (notebook 06), these predictions were re-registered quantitatively ([decisions.md](notebook/decisions.md)):
-- **Delay:** the nominal loop loses stability at 25.4 ms of injected delay (2.5 control periods).
-- **Motor-lag error:** the nominal loop loses stability only when the true motor time constant exceeds 3.3 times the modelled one. So within a ±50 % lag error it stays stable, and any harm from lag errors would have to come from the correction path itself.
-- **Mass:** +10 % mass leaves a 49 mm altitude offset.
-- **Drag:** on a 1 m/s ramp, drag adds only 23 mm to a 0.47 m lag that is intrinsic to set-point tracking.
+With the nominal controller fixed (notebook 06), these predictions were re-registered quantitatively ([decisions.md](notebook/decisions.md)). The numbers below are for the implementation the hardware will run, in which the one-period computation delay is modelled by the MPC:
+- **Delay:** the nominal loop loses stability at 24.6 ms of injected delay (2.5 control periods), beyond the modelled computation delay. On hardware this budget is shared with the still unmeasured state-estimation latency.
+- **Motor-lag error:** the nominal loop loses stability only when the true motor time constant exceeds 2.9 times the modelled one (or falls below 0.19 times it). Within a ±50 % lag error it stays stable. Lag error is therefore the benign control case, and any harm from it would have to come from the correction path itself. Delay is the primary destabilizing case.
+- **Mass:** +10 % mass leaves a 53 mm altitude offset.
+- **Drag:** on a 1 m/s ramp, drag adds only 24 mm to a 0.48 m lag that is intrinsic to set-point tracking.
 
 If the experiments contradict these, the predictions change and the reason is investigated.
 

@@ -120,6 +120,39 @@ These supersede, for quantitative use, the provisional predictions of entry 04, 
 | Mass | Steady altitude offset of **−49 mm for +10 %** mass (−99 mm for +20 %), linear in the error. A residual correction should remove it (helps). |
 | Drag | No steady effect in hover or on set-points. On a 1 m/s ramp it adds **0.023 m** to an intrinsic setpoint-tracking lag of 0.47 m, so a residual correction for drag can only help a little, and the reference formulation (entry 08) matters twenty times more. |
 
+## 2026-11-12 — Amendment: computation delay (entry 06, section 11)
+
+**Decision.** The controller is implemented with a **fixed one-step computation delay, modelled**: implementation (b). The command computed from the state at $t_k$ is applied at $t_{k+1}$. The MPC predicts $\hat{\mathbf x}_{k+1|k}$ with the command in flight and optimizes from it. The hardware will run (b). On a missed deadline it applies the previous plan's second move.
+
+**Alternative.** (a) Apply-on-solve, with the computation delay (0 to $t_{\text{solve}}$) as unmodelled jitter.
+
+**Why (b).**
+- **Budget:** injected delay plus estimation latency gets 24.6 ms under (b), against about 16.4 ms under (a). The (a) figure holds only if the estimated 9 ms worst-case on-board solve holds, and it ignores that jitter is harder on a loop than a fixed delay.
+- **Cost:** under (b) the roll/pitch gain margin falls from 5.8 to 2.66 and the phase margin from 41.5° to 35.6°. A lower lag-error cliff also appears at 0.186 $\tau_m$ (12 ms), far outside any credible motor-model error.
+
+**Amends.** Entry 05's assumption of zero computation delay in simulation. From entry 07 on, simulations and analyses include the modelled one-step delay.
+
+**New line item.** **State-estimation latency** $D_{\text{est}}$ (on-board EKF plus positioning system) is an **unmeasured delay** and must be bench-measured. The remaining budget for injected delay is
+
+$$D_{\text{inj}} \le D_{\text{tot}} - \Delta t/2 - D_{\text{comp}} - D_{\text{est}} = 39.6 - 5 - 10 - D_{\text{est}} = 24.6\ \text{ms} - D_{\text{est}} .$$
+
+## 2026-11-12 — Re-registered predictions, amended for implementation (b)
+
+The table "Re-registered predictions (after entry 06)" above is kept as recorded; it holds for implementation (a). For the implementation that will actually run, (b):
+
+| Mismatch | Implementation (a), as registered above | Implementation (b), amended |
+|---|---|---|
+| Delay | cliff at 25.4 ms = 2.54 $\Delta t$ | cliff at **24.6 ms = 2.46 $\Delta t$ = 0.58 $t_{\text{att}}$** of injected delay beyond the modelled computation period; effective loop delay at the cliff 39.6 ms |
+| Motor-lag error | unstable above 3.28 $\tau_m$ | unstable **above 2.86 $\tau_m$ and below 0.186 $\tau_m$** |
+| Mass +10 % | −49 mm | **−53 mm** |
+| Drag on a 1 m/s ramp | +23 mm on a 0.466 m lag | **+24 mm on a 0.476 m lag** |
+
+## 2026-11-12 — Lag error is the benign control case; delay is the primary destabilizing case
+
+**Finding.** Both lag-error cliffs (above 2.86 $\tau_m$, and below 0.186 $\tau_m$ under implementation (b)) lie far outside the planned ±30–50 percent sweep. **Motor-lag error is therefore the benign control case of the study, and actuation delay is the primary destabilizing case**: its cliff of 2.46 periods sits inside the delay grid.
+
+**Decision.** Lag error stays in the study, because it tests the *correction path*: whether a state-dependent residual can harm a loop that is itself comfortably stable (entry 10). Its sweep is extended to **4 $\tau_m$** so that the upper cliff itself is observed once. A point at 0.15 $\tau_m$ is also added, to observe the lower cliff of implementation (b) once (entry 07).
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.

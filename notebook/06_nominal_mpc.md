@@ -164,7 +164,7 @@ Each loop has one gain crossover. The roll and pitch loops are the binding ones:
 
 **Not proven, only tested:**
 - **Stability of the *constrained* closed loop.** MPC for tracking guarantees it with a terminal *set* (Limon et al.). Decision Q2 removes the terminal set, so that guarantee does not apply. With the Riccati terminal cost, the optimal cost is a Lyapunov function only where the constraints are inactive along the predicted tail. Outside that region, stability is a property we test, and Assumption 2 is verified numerically, as decision Q2 requires.
-- **Behaviour on the nonlinear plant.** A closed-loop test on the nonlinear plant used the full inertia matrix, RK4 at 1 ms and the constrained QP solved at every period. It flew a 1 m step in x, 0.5 m in z and 0.3 rad in yaw, simultaneously. It converged to within $10^{-4}$ m and rad. The commands stayed inside the thrust box (reaching the ceiling during the step) and inside the rate limit. The tilt stayed within 0.2° of the soft limit. DAQP and OSQP agreed on every first move to $10^{-5}$. This is one test, not a proof. The systematic sweep over mismatches is in later entries.
+- **Behaviour on the nonlinear plant.** A closed-loop test on the nonlinear plant used the full inertia matrix, RK4 at 1 ms and the constrained QP solved at every period. It flew a 1 m step in x, 0.5 m in z and 0.3 rad in yaw, simultaneously. It converged to within $10^{-4}$ m and rad. The commands stayed inside the thrust box (reaching the ceiling during the step) and inside the rate limit. The tilt stayed within 0.3° of the soft limit. Every DAQP solution was checked against the KKT conditions. Primal feasibility, relative stationarity and complementarity all held to $10^{-8}$; the observed worst values were about $10^{-15}$, $10^{-15}$ and $10^{-10}$. OSQP, a first-order solver, is used only as a loose sanity check: its first moves must agree to $10^{-3} f_{\max}$. The observed differences are reported rather than bounded tightly. A tight bound on a first-order solver failed once in 400 solves on a clean Linux machine. This is one test, not a proof. The systematic sweep over mismatches is in later entries.
 
 **Assumption 2 for the nominal (no-mismatch) case** is therefore verified: Schur stability of the linear loop, a finite reference-to-state gain, and the nonlinear closed-loop test above. The mismatch sweep (mass, drag, lag error, delay, combinations) stays with entries 07 and 10.
 
@@ -205,6 +205,46 @@ The worst case is the open risk. Three mitigations are available:
 
 ---
 
+## 11. Amendment (2026-11-12): computation delay
+
+*Added after review. Sections 7–10 above describe implementation (a) and are kept unchanged, so that the earlier numbers stay visible. This section supersedes them where they differ.*
+
+**The problem.** Entry 05 assumed zero computation delay: the command computed from the state at $t_k$ is applied at $t_k$. On board, the solve takes time. The estimate of section 10 allows up to about 9 ms in the worst case, against a delay margin of 25.4 ms. That is not negligible. There are two ways to implement the controller.
+
+- **(a) Apply-on-solve.** The command is applied as soon as it is computed, somewhere between $t_k$ and $t_k + t_{\text{solve}}$. The delay varies from solve to solve (jitter), and the MPC does not model it. Sections 7–10 analyse this case with zero delay.
+- **(b) Fixed one-step computation delay, modelled.** The command computed from the state at $t_k$ is applied at exactly $t_{k+1}$. The MPC knows this. It first predicts the next state with the command already in flight, $\hat{\mathbf x}_{k+1|k} = \Phi\,[\mathbf x_{\text{rigid},k};\ \hat{\mathbf f}_k] + \Gamma\,\mathbf u_{k-1}$, then solves the same QP from $\hat{\mathbf x}_{k+1|k}$. Its thrust estimate is updated with the command actually applied, $\hat{\mathbf f}_{k+1} = a\hat{\mathbf f}_k + (1-a)\mathbf u_{k-1}$. The model is thereby augmented by the four-component command in flight. The QP itself is unchanged.
+
+**Both analysed the same way** (loop broken at the controller output, internal lag model included, discrete time, so the hold is inside the margins):
+
+| | (a) apply-on-solve | (b) one-step delay, modelled |
+|---|---|---|
+| Nominal spectral radius | 0.9587 | 0.9587 (the predictor is exact) |
+| Roll/pitch crossover | 28.5 rad/s ($1.21/t_{\text{att}}$) | 25.2 rad/s ($1.07/t_{\text{att}}$) |
+| Roll/pitch phase margin | 41.5° | 35.6° |
+| Roll/pitch gain margin | 5.8 (15.3 dB) | 2.66 (8.5 dB) |
+| Collective / yaw: crossover, PM, GM | 7.6 rad/s, 52°, 24.4 / 9.2 rad/s, 54°, 19.9 | 7.3 rad/s, 50°, 8.9 / 8.8 rad/s, 51°, 7.4 |
+| Delay cliff (injected, beyond what is modelled) | 25.4 ms = 2.54 $\Delta t$ | 24.6 ms = 2.46 $\Delta t$ = 0.58 $t_{\text{att}}$ |
+| Lag-error cliffs | above 3.28 $\tau_m$ only | below **0.186 $\tau_m$** (12 ms) and above **2.86 $\tau_m$** |
+| Mass +10 %: altitude offset | −49 mm | −53 mm |
+| 1 m/s ramp: set-point lag (drag adds) | 0.466 m (+0.023 m) | 0.476 m (+0.024 m) |
+
+**The delay budget.** The loop tolerates a total effective delay, measured against the ideal continuous loop. Everything that delays the loop is paid out of it:
+
+$$\underbrace{D_{\text{inj}} + D_{\text{est}}}_{\text{budget}} \;=\; \underbrace{D_{\text{tot}}}_{\text{tolerable}} - \underbrace{\Delta t/2}_{\text{hold}} - \underbrace{D_{\text{comp}}}_{\text{computation}}.$$
+
+- **(a)** $D_{\text{tot}}$ = 30.4 ms. The computation delay is unmodelled and can reach the worst-case solve time. With the estimated 9 ms, the budget is **16.4 ms − $D_{\text{est}}$**. Two caveats make this optimistic. The 9 ms figure is itself an estimate. And a time-varying jitter is in general harder on a loop than a fixed delay of the same size, which the fixed-delay analysis does not capture.
+- **(b)** $D_{\text{tot}}$ = 39.6 ms (5 ms hold + 10 ms modelled computation + 24.6 ms). The computation delay is modelled, so it costs nothing extra as long as every solve finishes within one period. The budget is **24.6 ms − $D_{\text{est}}$**.
+
+**State-estimation latency, $D_{\text{est}}$, is an unmeasured delay.** On hardware, the state fed to the MPC comes from the on-board estimator, which fuses a positioning system with the IMU. Both the positioning system's latency and the estimator's own delay reach the loop as delay. Neither is measured yet. They are a **line item to be bench-measured**, and every injected-delay result on hardware must be read against $24.6\ \text{ms} - D_{\text{est}}$. In simulation $D_{\text{est}} = 0$, because the simulator provides the true state.
+
+**Decision: (b).** It costs margin. The gain margin falls from 5.8 to 2.66, the phase margin from 41.5° to 35.6°, and a lower lag-error cliff appears: a true motor more than five times faster than modelled would destabilize the predictor. It saves more than it costs. The budget for injected delay plus estimation latency rises from about 16.4 ms (and only if the 9 ms worst-case solve estimate holds) to 24.6 ms. The computation delay also becomes fixed and known instead of a jitter of unknown size. The lower lag cliff, at 12 ms against an identified 65 ms, lies far outside any credible motor-model error, and the planned ±50 percent sweep stays stable. **The hardware will run (b).** If a solve misses the 10 ms deadline, the controller applies the second move of the previous solution, $\mathbf u_{1|k-1}$, which is already computed. That keeps the timing fixed. How often deadlines are missed is part of the on-board measurement.
+
+**PC solve times under (b)** are essentially those of section 10: median 0.05 ms, worst case 1.5–3.4 ms across runs, up to 97 iterations during saturated transients. The predicted initial state shifts the QP slightly. Every solution passes the KKT check above, and the nonlinear closed-loop test passes under (b) as well.
+
+**Consequence for the predictions.** The cliffs are re-registered in [decisions.md](decisions.md) as a dated amendment, with the section 9 values kept. All later entries (07 onward) use implementation (b).
+
+---
+
 ## What this entry commits us to, and what is open
 
 **Committed.**
@@ -215,8 +255,9 @@ The worst case is the open risk. Three mitigations are available:
 - **Horizon and weights:** N = 20 (4.7 $t_{\text{att}}$, 3.1 $\tau_m$), Bryson weights as tabulated, $\mathbf R = \mathbf I/(0.0489\ \text{N})^2$.
 - **Unconstrained law:** $\mathbf u = \mathbf K_x\mathbf x + \mathbf K_r\mathbf r$, equal to the QP where no constraint is active.
 - **Nominal loop:** roll and pitch crossover 28.5 rad/s ($1.2/t_{\text{att}}$) with 41.5° phase margin, gain margin 5.8 and delay margin 25.4 ms. The collective and yaw loops are slower and have larger margins.
-- **Assumption 2, nominal case:** verified.
-- **Re-registered predictions:** as in section 9 and decisions.md.
+- **Assumption 2, nominal case:** verified, for both implementations.
+- **Implementation (amendment, section 11):** (b), a fixed one-step computation delay modelled by prediction. Roll/pitch crossover 25.2 rad/s, PM 35.6°, GM 2.66. Injected-delay cliff 24.6 ms. Stable for a true motor time constant between 0.186 and 2.86 times the modelled one. Budget for injected delay plus estimation latency: 24.6 ms − $D_{\text{est}}$. On a missed deadline the controller applies the previous plan's second move.
+- **Re-registered predictions:** as in section 9 (implementation a), amended for implementation (b) in decisions.md.
 
 **Deferred, noted, not forgotten.**
 - The trajectory (preview) formulation, with flat-state feedforward over the horizon: entry 08, with F-2.
