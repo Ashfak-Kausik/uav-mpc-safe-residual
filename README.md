@@ -8,7 +8,7 @@ A learned residual model can make a quadrotor model predictive controller (MPC) 
 
 The answer proposed here is a two-layer supervisor. An analytic **hard layer** computes an upper bound on trust from three closed-form quantities: actuator realizability, loop gain, and a barrier condition. Inside that bound, a learned **soft layer**, trained by adaptive dynamic programming (ADP), chooses the trust level. The nominal MPC is never modified, and zero trust reproduces it exactly.
 
-The full method, equations, and analysis plan are in the research proposal: [`docs/Research_Proposal.pdf`](docs/Research_Proposal.pdf). This README is the summary.
+The full derivations are in the [`notebook/`](notebook/), which is the technical source of truth for this project. This README is the summary.
 
 ---
 
@@ -199,9 +199,8 @@ Current:
 ```
 uav-mpc-safe-residual/
 ├── README.md
-├── docs/
-│   └── Research_Proposal.pdf
 └── notebook/
+    ├── project_details.md
     ├── 00_state_and_frames.md
     ├── 01_forces_and_torques.md
     ├── 02_translational_dynamics.md
