@@ -225,6 +225,7 @@ uav-mpc-safe-residual/
     ├── 02_translational_dynamics.md
     ├── 03_rotational_dynamics.md
     ├── 04_hover_equilibrium.md
+    ├── 05_discretization.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history

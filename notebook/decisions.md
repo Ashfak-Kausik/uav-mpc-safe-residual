@@ -69,6 +69,20 @@ The source of every parameter is recorded in entry 01. $f_{\max}$ and the thrust
 
 ---
 
+## 2026-11-12 — Control period and plant step (entry 05)
+
+**Decision.**
+- **Control period** $\Delta t = 10$ ms (100 Hz). This gives $\Delta t/t_{\text{att}} = 0.236$, $\Delta t/\tau_m = 0.155$, and a sample-and-hold phase loss of 6.8° at $1/t_{\text{att}}$.
+- **Plant step** $h = 1$ ms, RK4 with quaternion renormalisation.
+- **Prediction model:** exact ZOH (linear) or at least one RK4 step per period (nonlinear), never forward Euler.
+- **Simulation timing:** zero computation delay, as an explicit modelling assumption.
+
+**Alternatives.**
+- 50 Hz: 13.5° hold phase and only two samples per $t_{\text{att}}$. Rejected, because the MPC is itself the attitude loop.
+- 200–500 Hz: little gain, against a larger optimization per second.
+
+**Open.** Solve time at 100 Hz is unverified until Phase 3. A change of $\Delta t$ will be a dated amendment here.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.
