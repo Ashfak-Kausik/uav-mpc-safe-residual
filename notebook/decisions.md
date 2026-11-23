@@ -205,6 +205,14 @@ The hypothesis was that the controller's open-loop thrust estimate lags the true
 - **Re-registered.** The trajectory law's cliffs equal implementation (b)'s to within 0.03 ms (delay 24.6 ms; lag 0.186 and 2.86), so the amended predictions stand unchanged.
 - **New prediction for research question 1.** On smooth trajectories inside Θ, lag error and delay cost about a millimetre of tracking: 0.68 mm RMS at 20 ms on the figure-8. Mass and drag cost tens to hundreds of millimetres. A learned correction can therefore gain little for lag and delay, while its feedback character can cost margin.
 
+## 2026-11-23 — The realizability ratio and Target Result 1 (entry 09)
+
+- **Definition.** $r_H$ is the ratio test over **all 420 rows** of the QP with the slacks at zero: input box, input rate, soft tilt and soft altitude. The proposal tested only box and rate, and that would make Target Result 1 false whenever a soft state row became active (audit F-5). The direction is $\delta\mathbf U = (\partial\mathbf U^{\text{aff}}/\partial\Delta\mathbf R)\,\Delta\mathbf R$, a constant matrix because the MPC is linear and time-invariant.
+- **Target Result 1** is proved for the MPC we run. If no row is active at the current solve and β ≤ $r_H$, the solution is the affine law with zero slacks. The bound is sharp, and there is no "first-order" caveat: the MPC is linear.
+- **Hard-layer rule.** The realizability bound is $r_H$ when the current QP solution has no active constraint. Otherwise it is $r_{\text{PWA}}$, the exact exit ratio of the current critical region from the active set's KKT sensitivity. The reason: in aggressive runs with constraints already active, $r_H$ over-stated $r_{\text{PWA}}$ in 135 of 596 evaluations.
+- **Measured error.** Against the physical LP, $r_H \le r_{\text{LP}}$ always, and the gap is at most 0.032 (mean at most 0.002). The ratio test is therefore not conservative in practice.
+- **Note for entry 12.** A correction requested all at once is often not fully realizable ($r_H < 1$ in half the evaluations even on a moderate figure-8). The soft layer's rate limit on increases of trust is therefore functional, not cosmetic.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.

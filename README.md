@@ -79,7 +79,7 @@ Here $\alpha_k$ is the trust scale and $\bar{\alpha}_k$ is its upper bound. With
 
 | Bound | Guards against | How it is computed |
 |-------|----------------|--------------------|
-| $r_H$, realizability ratio | Actuator saturation | The largest fraction of the requested correction that the rotors can absorb over the horizon under thrust and rate limits. A ratio test on the inputs the MPC already predicts, $O(Nm)$ divisions, no solver |
+| $r_H$, realizability ratio | Actuator saturation | The largest fraction of the requested correction that keeps every row of the MPC's problem satisfied: thrust box and rate, plus the soft tilt and altitude rows. A ratio test on the inputs the MPC already predicts, with no solver. It is exact when no constraint is active; otherwise the exact region-exit ratio of the current active set is used ([notebook 09](notebook/09_realizability.md)) |
 | $\alpha_{\mathrm{sg},k}$, small-gain bound | Loop gain of the correction path | From the small-gain theorem [36], [37]: trust times the certified Lipschitz constant of the correction map [48], [49] times the closed-loop gain must stay below one. The closed-loop gain is computed offline over the mismatch set |
 | $\alpha_{\mathrm{cbf},k}$, barrier bound | State limits (tilt, altitude) | Discrete-time control barrier condition [44] with a robustness margin, using high-order constructions [45], [11], [12], because tilt and lateral position have relative degree above one |
 
@@ -111,7 +111,7 @@ Here $\psi_k$ is a clipped measure of ensemble variance, $\iota_k$ is the ensemb
 
 Assumption 2 sets the scope: no claim is made beyond the stability boundary of the nominal loop.
 
-**Target Result 1: transmission of the correction.** For the linearized MPC, if no constraint is active and trust is at or below the realizability ratio, no input constraint becomes active and the MPC acts as its unconstrained affine law [35]. The correction is transmitted in full.
+**Target Result 1: transmission of the correction.** If no constraint is active at the current solve and trust is at or below the realizability ratio, no constraint becomes active and the MPC acts as its unconstrained affine law [35]. The correction is transmitted in full. This is proved in notebook 09 for the MPC actually used. That MPC is linear, so the result is exact, not first-order, and the bound is sharp.
 
 **Target Result 2: safety for any soft policy.** For any trust level inside the hard bound:
 - (i) the MPC is feasible. This is trivial, because only input constraints are hard and holding the previous command is always admissible.
@@ -243,6 +243,7 @@ uav-mpc-safe-residual/
     ├── 06_nominal_mpc.md
     ├── 07_perturbation_models.md
     ├── 08_reference_correction.md
+    ├── 09_realizability.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history
@@ -288,7 +289,7 @@ These are tracked here so that they are settled by evidence and not by assumptio
 - *Resolved in notebook 08:* the correct reference correction for a mismatch with no steady-state effect (motor-lag error, delay). It is the oracle correction along the trajectory, zero on set-points.
 - Which mechanism dominates under motor-lag error and delay at the reference injection point: saturation or loop gain? The linear analysis predicts that on smooth trajectories these mismatches cost only about a millimetre of tracking. A learned correction can then gain little, while its state dependence can cost stability margin. Phase 4 tests this with the oracle on the nonlinear plant.
 - In its first version the small-gain bound uses a fixed mismatch set, so it is a constant. How conservative is it, and how much does narrowing the set online recover?
-- The realizability ratio is exact only for the linearized MPC. Its error on aggressive trajectories, and against the exact linear-program answer, needs to be measured.
+- *Measured in notebook 09:* the realizability ratio's error. Against the physical linear-program answer it is within 0.032 and never above it. Against the exact transmission ratio it is exact without active constraints, but over-optimistic in about a quarter of aggressive cases with constraints active. Still open: its on-board cost, and its behaviour on the nonlinear plant with the oracle corrections.
 - How much plan preview the learned correction needs. The oracle recovers 95 % of its benefit with about 0.5 s of preview. A correction computed from past errors alone makes tracking worse.
 - The vehicle's maximum thrust (thrust-to-weight ratio 1.69 from the firmware, against up to about 2.5 in other sources) must be re-identified on a bench, under the flight firmware's thrust configuration, together with the motor time constant. With the firmware's thrust floor, the authority knee sits at a thrust-to-weight ratio of 1.82. Below it, as now, torque authority is limited by the rotor ceiling (84 % of the floor-limited value), so saturation is active more often. The bench test may move the vehicle across the knee.
 - Non-degradation is guaranteed only in expectation over the training distribution. How does the learned policy behave under a shifted distribution?
