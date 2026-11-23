@@ -175,7 +175,7 @@ def frac_delay_gammas(A, B, D):
     return Phi, Ga, expm(A * (1 - eps) * DT) @ Gb, d
 
 
-def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag, impl=None, extra=None):
+def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag, impl=None, extra=None, Kfb=None, Kref=None, thrust="estimate"):
     """Linear closed loop: plant (true lag tau_true, injected delay D) + MPC law, with the delivered thrusts
     estimated by the controller's own lag model (thrust is not measured on board).
 
@@ -186,8 +186,12 @@ def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag, impl=None, extra=None):
         already in flight, then applies the same law to the prediction: u_k = Kx x_hat_{k+1|k} + Kr r;
         f_hat_{k+1} = a f_hat_k + (1-a) u_{k-1}. The plant sees a total delay DT + D.
     extra: optional (Phi_p, Gam_p) replacing the plant's ZOH matrices (used by entry 07 for mass and drag).
+    Kfb, Kref: optional feedback gain (4x16) and reference gain (4xNY) replacing (Kx, Kr) (entry 08).
+    thrust: "estimate" (default, on-board) or "measured" (counterfactual: the law uses the true delivered thrust).
     State: [x (16), f_hat (4), u_{k-1}, u_{k-2}, ... (buffer)]. Returns (Acl, Bcl_r)."""
     impl = impl or IMPL
+    Kx = globals()["Kx"] if Kfb is None else Kfb
+    Kr = globals()["Kr"] if Kref is None else Kref
     A, B = plant_matrices(tau_true, I)
     D_plant = D + (DT if impl == "b" else 0.0)
     Phi, G0, G1, d = frac_delay_gammas(A, B, D_plant)
@@ -203,15 +207,16 @@ def closed_loop(tau_true=P.tau_m, D=0.0, I=P.I_diag, impl=None, extra=None):
     n = NX + NU + NU * nb
     Kxr, Kxf = Kx[:, :12], Kx[:, 12:16]
     Fz = np.zeros((NU, n))
+    fcol = slice(NX, NX + NU) if thrust == "estimate" else slice(12, 16)   # where the law reads the thrust
     if impl == "a":
         Fz[:, :12] = Kxr
-        Fz[:, NX:NX + NU] = Kxf
+        Fz[:, fcol] = Kxf
     else:
         Phi_n, Gam_n = Ad, Bd
         # x_hat = Phi_n [x_rigid; f_hat] + Gam_n u_{k-1};  u_k = Kx x_hat + Kr r
         Sel = np.zeros((NX, n))
         Sel[:12, :12] = np.eye(12)
-        Sel[12:16, NX:NX + NU] = np.eye(NU)
+        Sel[12:16, fcol] = np.eye(NU)
         Ubuf0 = np.zeros((NU, n))
         Ubuf0[:, NX + NU:NX + 2 * NU] = np.eye(NU)
         Fz = Kx @ (Phi_n @ Sel + Gam_n @ Ubuf0)
@@ -272,9 +277,9 @@ def loop_at_plant_input(w, tau_true=P.tau_m, impl=None):
     return MIX @ L @ np.linalg.inv(MIX)
 
 
-def channel_margins(n_freq=40000, impl=None):
+def channel_margins(n_freq=40000, impl=None, tau_true=P.tau_m):
     ws = np.logspace(-1, np.log10(np.pi / DT * 0.9999), n_freq)
-    Ls = np.array([np.diag(loop_at_plant_input(w, impl=impl)) for w in ws])   # (n_freq, 4)
+    Ls = np.array([np.diag(loop_at_plant_input(w, tau_true=tau_true, impl=impl)) for w in ws])   # (n_freq, 4)
     out = {}
     for ch, name in enumerate(["collective", "roll", "pitch", "yaw"]):
         L = Ls[:, ch]

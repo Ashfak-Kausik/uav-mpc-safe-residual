@@ -175,6 +175,36 @@ The table "Re-registered predictions (after entry 06)" above is kept as recorded
 - **Finding (re-registered prediction).** A lag error narrows the delay margin. A motor *faster* than modelled by 50 percent cuts the delay cliff from 24.6 ms to **15.8 ms**; 1.5× slower cuts it to 22.7 ms; 2× slower, to 16.2 ms. The four unstable combinations are exactly lag ×0.5 with 2 $\Delta t$ of delay.
 - **Constraint on entry 10.** Near the cliffs, the closed-loop gain grows in the attitude states, not in position: the peak gain from reference to position stays at 1.00. The loop-gain bound must be computed on a gain that includes attitude.
 
+## 2026-11-12 — Mechanism of the lag-error / delay interaction (entry 07 addition)
+
+The hypothesis was that the controller's open-loop thrust estimate lags the true thrust and raises the loop gain. It was **refuted as stated**.
+- **A faster motor keeps its phase margin but raises the crossover** (25 → 43 rad/s), so the same phase is used up by less delay.
+- **The higher gain comes from the plant's own reduced lag attenuation.** It is ×1.93 at 100 rad/s, equal to the ratio $|1+j\omega\tau_m|/|1+j\omega\tau_m/2|$.
+- **A measured-thrust counterfactual shows the same asymmetry.** The estimate actually *widens* the nominal delay cliff (24.6 ms, against 15.3 ms with measured thrust).
+
+## 2026-11-12 — Reference content (resolves F-7) and the reference correction (resolves F-2) (entry 08)
+
+- **Reference content.**
+  - The MPC tracks a planned trajectory over its horizon.
+  - Full linear-flatness feedforward (velocity, tilt, body rates, delivered thrust, and commanded thrust with the motor-lag inversion) is computed from the **plan's analytic derivatives** up to fifth order.
+  - The artificial steady state is dropped, since feasibility is already trivial (Q2).
+  - The constant set-point MPC for tracking (entry 06) is kept as an ablation, and all baselines use the same reference treatment as the method they are compared with.
+- **Correction rule.** A reference correction shifts only position and yaw over the horizon and is **never differentiated**. A finite-difference derivative would amplify it by up to $2.5/\Delta t^5$.
+- **The oracle.**
+  - $\Delta\mathbf r^\star = \arg\min \|\mathbf y(\mathbf r + \Delta\mathbf r) - \mathbf r\|^2 + \lambda\|\Delta\mathbf r\|^2$ over the trajectory window, with $\lambda = 0.01$: the loop is inverted only where its gain exceeds −20 dB.
+  - For mass and drag it equals the proposal's steady-state offset, up to $1/(1+\lambda)$.
+  - For lag error and delay it is zero on set-points and nonzero on trajectories. **This resolves F-2.**
+- **Taxonomy.**
+  - Feedforward corrections leave the closed-loop eigenvalues unchanged and cannot move a cliff.
+  - Feedback (state-dependent) corrections can move it either way. Tilt feedback of ±0.2 m/rad moves the delay cliff by −15 / +18 percent.
+  - The learned approximator of the oracle is a feedback correction. **Entry 10 must bound its state sensitivity, including attitude.**
+- **Refuted hypothesis.** The delay oracle is *not* a time advance by D. It is a small multi-derivative correction, linear in D: 2.96 mm at 20 ms, 5.6× smaller than $D\,v_{\max}$.
+- **Preview.**
+  - About 0.5 s of plan preview recovers 95 percent or more of the oracle's benefit; the 0.21 s horizon window alone recovers 72–93 percent.
+  - **A correction from past errors alone makes tracking worse** (−63 to −90 percent).
+- **Re-registered.** The trajectory law's cliffs equal implementation (b)'s to within 0.03 ms (delay 24.6 ms; lag 0.186 and 2.86), so the amended predictions stand unchanged.
+- **New prediction for research question 1.** On smooth trajectories inside Θ, lag error and delay cost about a millimetre of tracking: 0.68 mm RMS at 20 ms on the figure-8. Mass and drag cost tens to hundreds of millimetres. A learned correction can therefore gain little for lag and delay, while its feedback character can cost margin.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.
@@ -184,3 +214,5 @@ The table "Re-registered predictions (after entry 06)" above is kept as recorded
 **Two related notes.**
 - **The "hurts" regime may weaken or vanish.** With the identified lag now in the nominal model (Q1), the unmodelled lag is only the error in $\tau_m$. With injection at the reference, the correction passes through the constraint-aware MPC. Both weaken the mechanism that harmed the earlier study. If the regime disappears for lag errors, that is a finding to report, and delay becomes the main test case.
 - **The predictions of entry 04 are provisional** and must be **re-registered after entry 06**, once the controller's horizon, weights and crossover frequency are fixed and the margins can be computed.
+
+> **Resolved (2026-11-12, entry 08).** The correct correction is the oracle of entry 08, a regularised least-squares reference correction along the trajectory. For zero-DC mismatches it is zero on set-points and nonzero only on moving references. See the entry-08 decision above. The predictions were re-registered after entry 06 as required.

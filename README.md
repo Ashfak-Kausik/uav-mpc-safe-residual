@@ -58,7 +58,12 @@ flowchart LR
 
 **Mismatch model.** Motor lag and delay are dynamic, so the plant is modeled on an augmented state that includes the actuator states. On the Crazyflie the motor is slower than the attitude dynamics, so the identified motor lag is part of the nominal model. The lag mismatch is therefore an error in its time constant, while actuation delay remains a pure mismatch. The mismatch is the one-step prediction error of the nominal model, and a deep ensemble [15] predicts it from a short window of recent inputs.
 
-**Reference shaping.** The predicted mismatch is mapped to a saturated reference shift, and the MPC receives a shaped reference. The reference shift does not shorten the plant's chain of integrators. What it changes is that the rotor commands are computed by the constraint-aware MPC, with preview over the horizon, and that the correction reaches the output through the closed loop.
+**Reference shaping.** The MPC tracks a planned trajectory over its horizon, with feedforward computed from the plan's own derivatives ([notebook 08](notebook/08_reference_correction.md)). The predicted mismatch is mapped to a saturated shift of the reference's position and yaw over the horizon. The shift is never differentiated. It does not shorten the plant's chain of integrators. What it changes is that the rotor commands are computed by the constraint-aware MPC, and that the correction reaches the output through the closed loop.
+
+The correct correction is defined as an *oracle*: the regularised least-squares reference shift that best restores tracking under the true mismatch.
+- **Mass and drag:** it equals a steady offset.
+- **Motor-lag error and delay:** it is zero on set-points and nonzero only along moving references.
+- **What can change stability:** a correction that depends only on the plan is feedforward and cannot move a stability limit. A learned correction that depends on the measured state is feedback and can move it, above all through its sensitivity to tilt.
 
 ```math
 \tilde{r}_k = r_k + \alpha_k \, \Delta r_k, \qquad \alpha_k \in [0, \bar{\alpha}_k]
@@ -237,6 +242,7 @@ uav-mpc-safe-residual/
     ├── 05_discretization.md
     ├── 06_nominal_mpc.md
     ├── 07_perturbation_models.md
+    ├── 08_reference_correction.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history
@@ -279,11 +285,11 @@ tests/         unit and property tests (conservation laws, supervisor invariants
 
 These are tracked here so that they are settled by evidence and not by assumption.
 
-- **Critical, before any realizability or oracle work:** what is the correct reference correction for a mismatch with no steady-state effect, such as a motor-lag error or a delay? A map that cancels the mismatch at steady state has nothing to cancel for them. Notebook 08 must define it ([decisions.md](notebook/decisions.md)).
-- Which mechanism dominates under motor-lag error and delay at the reference injection point: saturation or loop gain? Does the "hurts" regime survive at all, now that the identified lag is in the nominal model? Phase 4 settles this with an oracle correction.
+- *Resolved in notebook 08:* the correct reference correction for a mismatch with no steady-state effect (motor-lag error, delay). It is the oracle correction along the trajectory, zero on set-points.
+- Which mechanism dominates under motor-lag error and delay at the reference injection point: saturation or loop gain? The linear analysis predicts that on smooth trajectories these mismatches cost only about a millimetre of tracking. A learned correction can then gain little, while its state dependence can cost stability margin. Phase 4 tests this with the oracle on the nonlinear plant.
 - In its first version the small-gain bound uses a fixed mismatch set, so it is a constant. How conservative is it, and how much does narrowing the set online recover?
 - The realizability ratio is exact only for the linearized MPC. Its error on aggressive trajectories, and against the exact linear-program answer, needs to be measured.
-- The map from predicted mismatch to reference shift still needs a full derivation (notebook 08).
+- How much plan preview the learned correction needs. The oracle recovers 95 % of its benefit with about 0.5 s of preview. A correction computed from past errors alone makes tracking worse.
 - The vehicle's maximum thrust (thrust-to-weight ratio 1.69 from the firmware, against up to about 2.5 in other sources) must be re-identified on a bench, under the flight firmware's thrust configuration, together with the motor time constant. With the firmware's thrust floor, the authority knee sits at a thrust-to-weight ratio of 1.82. Below it, as now, torque authority is limited by the rotor ceiling (84 % of the floor-limited value), so saturation is active more often. The bench test may move the vehicle across the knee.
 - Non-degradation is guaranteed only in expectation over the training distribution. How does the learned policy behave under a shifted distribution?
 
