@@ -213,6 +213,16 @@ The hypothesis was that the controller's open-loop thrust estimate lags the true
 - **Measured error.** Against the physical LP, $r_H \le r_{\text{LP}}$ always, and the gap is at most 0.032 (mean at most 0.002). The ratio test is therefore not conservative in practice.
 - **Note for entry 12.** A correction requested all at once is often not fully realizable ($r_H < 1$ in half the evaluations even on a moderate figure-8). The soft layer's rate limit on increases of trust is therefore functional, not cosmetic.
 
+## 2026-11-23 — The loop-gain bound (entry 10)
+
+- **Loop and norm.** $G_\theta$ maps the scaled reference correction (position and yaw, horizon-constant) to the scaled signal the learned map reads: the 12 rigid-body states, *including tilt* (entry 07), and the command in flight. Its gain is the **certified H∞ norm** by Hamiltonian bisection (Boyd, Balakrishnan and Kabamba, 1989), cross-checked by a frequency sweep. A window of $L+1$ samples costs exactly $\sqrt{L+1}$ (audit F-3).
+- **Gain over Θ.** 1.000 nominally; at most 1.10 under mass and drag; up to 4.90 (lag ×0.3) and 6.28 (delay 20 ms) singly. **$\bar\gamma = 13.41$** is the supremum over the 32-point combination grid (drag ×4, lag ×1.5, delay 20 ms). It is a grid value, not a proof over the continuum.
+- **Small-gain validity.** For linear corrections the bound is always valid and only 1.13–2.9× conservative in the worst direction.
+- **Network constant.** Product of layer spectral norms with spectral normalisation, so the constant is set before deployment. The ensemble mean and the saturation do not increase it. LipSDP is deferred.
+- **The generic bound is nearly vacuous.** For a realistic averaging bias estimator, $\alpha_{\text{sg}} = (1-\varepsilon)/(L_\Delta\gamma)$ allows at most 0.25, where the exact boundary is 4.8 or more: 70–200× conservative, and worse for longer windows. **Architecture decision:** the learned map is a fixed LTI feature filter $E$, certified jointly with the loop as $\sup_\theta\|E G_\theta\|_\infty$, followed by a low-dimensional, spectrally normalised network. The structured bound $\alpha L_N \sup_\theta\|E G_\theta\|_\infty < 1$ is valid and allows full trust at every set point and window tested (1.66 or more).
+- **The window includes past states.** The proposal's window of current state and past inputs cannot form a residual.
+- **Gain form (audit F-3, F-4).** The bias $\alpha N(\mathbf w_{\text{nom}})$ is an exogenous input. The rest is a pointwise sector bound with $\bar\alpha$, the largest trust the soft layer can command, so trust may vary with time and state and needs no Lipschitz condition. The closed-loop gain is at most $\gamma/(1-\gamma\bar\alpha L_N)$.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.
