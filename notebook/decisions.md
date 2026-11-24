@@ -175,6 +175,54 @@ The table "Re-registered predictions (after entry 06)" above is kept as recorded
 - **Finding (re-registered prediction).** A lag error narrows the delay margin. A motor *faster* than modelled by 50 percent cuts the delay cliff from 24.6 ms to **15.8 ms**; 1.5× slower cuts it to 22.7 ms; 2× slower, to 16.2 ms. The four unstable combinations are exactly lag ×0.5 with 2 $\Delta t$ of delay.
 - **Constraint on entry 10.** Near the cliffs, the closed-loop gain grows in the attitude states, not in position: the peak gain from reference to position stays at 1.00. The loop-gain bound must be computed on a gain that includes attitude.
 
+## 2026-11-12 — Mechanism of the lag-error / delay interaction (entry 07 addition)
+
+The hypothesis was that the controller's open-loop thrust estimate lags the true thrust and raises the loop gain. It was **refuted as stated**.
+- **A faster motor keeps its phase margin but raises the crossover** (25 → 43 rad/s), so the same phase is used up by less delay.
+- **The higher gain comes from the plant's own reduced lag attenuation.** It is ×1.93 at 100 rad/s, equal to the ratio $|1+j\omega\tau_m|/|1+j\omega\tau_m/2|$.
+- **A measured-thrust counterfactual shows the same asymmetry.** The estimate actually *widens* the nominal delay cliff (24.6 ms, against 15.3 ms with measured thrust).
+
+## 2026-11-12 — Reference content (resolves F-7) and the reference correction (resolves F-2) (entry 08)
+
+- **Reference content.**
+  - The MPC tracks a planned trajectory over its horizon.
+  - Full linear-flatness feedforward (velocity, tilt, body rates, delivered thrust, and commanded thrust with the motor-lag inversion) is computed from the **plan's analytic derivatives** up to fifth order.
+  - The artificial steady state is dropped, since feasibility is already trivial (Q2).
+  - The constant set-point MPC for tracking (entry 06) is kept as an ablation, and all baselines use the same reference treatment as the method they are compared with.
+- **Correction rule.** A reference correction shifts only position and yaw over the horizon and is **never differentiated**. A finite-difference derivative would amplify it by up to $2.5/\Delta t^5$.
+- **The oracle.**
+  - $\Delta\mathbf r^\star = \arg\min \|\mathbf y(\mathbf r + \Delta\mathbf r) - \mathbf r\|^2 + \lambda\|\Delta\mathbf r\|^2$ over the trajectory window, with $\lambda = 0.01$: the loop is inverted only where its gain exceeds −20 dB.
+  - For mass and drag it equals the proposal's steady-state offset, up to $1/(1+\lambda)$.
+  - For lag error and delay it is zero on set-points and nonzero on trajectories. **This resolves F-2.**
+- **Taxonomy.**
+  - Feedforward corrections leave the closed-loop eigenvalues unchanged and cannot move a cliff.
+  - Feedback (state-dependent) corrections can move it either way. Tilt feedback of ±0.2 m/rad moves the delay cliff by −15 / +18 percent.
+  - The learned approximator of the oracle is a feedback correction. **Entry 10 must bound its state sensitivity, including attitude.**
+- **Refuted hypothesis.** The delay oracle is *not* a time advance by D. It is a small multi-derivative correction, linear in D: 2.96 mm at 20 ms, 5.6× smaller than $D\,v_{\max}$.
+- **Preview.**
+  - About 0.5 s of plan preview recovers 95 percent or more of the oracle's benefit; the 0.21 s horizon window alone recovers 72–93 percent.
+  - **A correction from past errors alone makes tracking worse** (−63 to −90 percent).
+- **Re-registered.** The trajectory law's cliffs equal implementation (b)'s to within 0.03 ms (delay 24.6 ms; lag 0.186 and 2.86), so the amended predictions stand unchanged.
+- **New prediction for research question 1.** On smooth trajectories inside Θ, lag error and delay cost about a millimetre of tracking: 0.68 mm RMS at 20 ms on the figure-8. Mass and drag cost tens to hundreds of millimetres. A learned correction can therefore gain little for lag and delay, while its feedback character can cost margin.
+
+## 2026-11-23 — The realizability ratio and Target Result 1 (entry 09)
+
+- **Definition.** $r_H$ is the ratio test over **all 420 rows** of the QP with the slacks at zero: input box, input rate, soft tilt and soft altitude. The proposal tested only box and rate, and that would make Target Result 1 false whenever a soft state row became active (audit F-5). The direction is $\delta\mathbf U = (\partial\mathbf U^{\text{aff}}/\partial\Delta\mathbf R)\,\Delta\mathbf R$, a constant matrix because the MPC is linear and time-invariant.
+- **Target Result 1** is proved for the MPC we run. If no row is active at the current solve and β ≤ $r_H$, the solution is the affine law with zero slacks. The bound is sharp, and there is no "first-order" caveat: the MPC is linear.
+- **Hard-layer rule.** The realizability bound is $r_H$ when the current QP solution has no active constraint. Otherwise it is $r_{\text{PWA}}$, the exact exit ratio of the current critical region from the active set's KKT sensitivity. The reason: in aggressive runs with constraints already active, $r_H$ over-stated $r_{\text{PWA}}$ in 135 of 596 evaluations.
+- **Measured error.** Against the physical LP, $r_H \le r_{\text{LP}}$ always, and the gap is at most 0.032 (mean at most 0.002). The ratio test is therefore not conservative in practice.
+- **Note for entry 12.** A correction requested all at once is often not fully realizable ($r_H < 1$ in half the evaluations even on a moderate figure-8). The soft layer's rate limit on increases of trust is therefore functional, not cosmetic.
+
+## 2026-11-23 — The loop-gain bound (entry 10)
+
+- **Loop and norm.** $G_\theta$ maps the scaled reference correction (position and yaw, horizon-constant) to the scaled signal the learned map reads: the 12 rigid-body states, *including tilt* (entry 07), and the command in flight. Its gain is the **certified H∞ norm** by Hamiltonian bisection (Boyd, Balakrishnan and Kabamba, 1989), cross-checked by a frequency sweep. A window of $L+1$ samples costs exactly $\sqrt{L+1}$ (audit F-3).
+- **Gain over Θ.** 1.000 nominally; at most 1.10 under mass and drag; up to 4.90 (lag ×0.3) and 6.28 (delay 20 ms) singly. **$\bar\gamma = 13.41$** is the supremum over the 32-point combination grid (drag ×4, lag ×1.5, delay 20 ms). It is a grid value, not a proof over the continuum.
+- **Small-gain validity.** For linear corrections the bound is always valid and only 1.13–2.9× conservative in the worst direction.
+- **Network constant.** Product of layer spectral norms with spectral normalisation, so the constant is set before deployment. The ensemble mean and the saturation do not increase it. LipSDP is deferred.
+- **The generic bound is nearly vacuous.** For a realistic averaging bias estimator, $\alpha_{\text{sg}} = (1-\varepsilon)/(L_\Delta\gamma)$ allows at most 0.25, where the exact boundary is 4.8 or more: 70–200× conservative, and worse for longer windows. **Architecture decision:** the learned map is a fixed LTI feature filter $E$, certified jointly with the loop as $\sup_\theta\|E G_\theta\|_\infty$, followed by a low-dimensional, spectrally normalised network. The structured bound $\alpha L_N \sup_\theta\|E G_\theta\|_\infty < 1$ is valid and allows full trust at every set point and window tested (1.66 or more).
+- **The window includes past states.** The proposal's window of current state and past inputs cannot form a residual.
+- **Gain form (audit F-3, F-4).** The bias $\alpha N(\mathbf w_{\text{nom}})$ is an exogenous input. The rest is a pointwise sector bound with $\bar\alpha$, the largest trust the soft layer can command, so trust may vary with time and state and needs no Lipschitz condition. The closed-loop gain is at most $\gamma/(1-\gamma\bar\alpha L_N)$.
+
 ## 2026-11-12 — Critical open problem before entry 05 and beyond: F-2
 
 **The reference correction for a dynamic (zero-DC) mismatch is undefined.** The proposal maps the predicted mismatch to "the reference offset that cancels it at steady state". Motor-lag error and delay do not move the equilibrium (entry 04), so they have no steady-state effect, and such a map has nothing to cancel for them. It either does nothing, or, through a noisy prediction, injects a purely state-dependent signal that adds loop gain.
@@ -184,3 +232,5 @@ The table "Re-registered predictions (after entry 06)" above is kept as recorded
 **Two related notes.**
 - **The "hurts" regime may weaken or vanish.** With the identified lag now in the nominal model (Q1), the unmodelled lag is only the error in $\tau_m$. With injection at the reference, the correction passes through the constraint-aware MPC. Both weaken the mechanism that harmed the earlier study. If the regime disappears for lag errors, that is a finding to report, and delay becomes the main test case.
 - **The predictions of entry 04 are provisional** and must be **re-registered after entry 06**, once the controller's horizon, weights and crossover frequency are fixed and the margins can be computed.
+
+> **Resolved (2026-11-12, entry 08).** The correct correction is the oracle of entry 08, a regularised least-squares reference correction along the trajectory. For zero-DC mismatches it is zero on set-points and nonzero only on moving references. See the entry-08 decision above. The predictions were re-registered after entry 06 as required.

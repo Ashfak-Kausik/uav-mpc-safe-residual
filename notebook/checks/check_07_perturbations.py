@@ -141,6 +141,32 @@ rep.check("combined delay cliffs: 15.8 ms with a x0.5 lag, 22.7 ms with x1.5, 16
           ", ".join(f"x{s}: {v*1e3:.2f} ms" for s, v in cl.items()))
 rep.check("a +-50 % lag error narrows the delay margin by up to 36 % (x0.5: 15.8 / 24.6)", abs(1 - cl[0.5] / 0.02462 - 0.36) < 0.01)
 
+# ---------------------------------------------------------------- 4b. mechanism: why a faster motor shortens the delay cliff more
+from mpc06 import channel_margins, loop_at_plant_input
+mech = {}
+for s in (0.5, 1.0, 1.5):
+    m_ = channel_margins(20000, tau_true=s * tau)["roll"]
+    mech[s] = dict(wc=m_["wc"], pm=m_["pm"], gm=m_["gm"], dm=np.radians(m_["pm"]) / m_["wc"],
+                   L100=abs(loop_at_plant_input(100.0, tau_true=s * tau)[1, 1]))
+print("   roll loop per lag ratio:", {s: {k: round(v, 3) for k, v in d.items()} for s, d in mech.items()})
+rep.check("x0.5 (faster motor): crossover rises 25.2 -> 43.0 rad/s, GM falls 2.66 -> 1.64, PM about unchanged (35.6 -> 38.9 deg)",
+          abs(mech[0.5]["wc"] - 43.0) < 0.3 and abs(mech[1.0]["wc"] - 25.2) < 0.2 and abs(mech[0.5]["gm"] - 1.64) < 0.02
+          and abs(mech[0.5]["pm"] - 38.9) < 0.3 and abs(mech[1.0]["pm"] - 35.6) < 0.3)
+rep.check("x1.5 (slower motor): crossover falls to 19.1 rad/s, GM rises to 3.64, PM falls to 24.9 deg",
+          abs(mech[1.5]["wc"] - 19.1) < 0.2 and abs(mech[1.5]["gm"] - 3.64) < 0.03 and abs(mech[1.5]["pm"] - 24.9) < 0.3)
+rep.check("delay margin PM/w_c reproduces the combined cliffs: 15.8 (x0.5), 24.6 (x1), 22.7 ms (x1.5)",
+          abs(mech[0.5]["dm"] - 0.0158) < 3e-4 and abs(mech[1.0]["dm"] - 0.0246) < 3e-4 and abs(mech[1.5]["dm"] - 0.0227) < 3e-4)
+ratio_obs = mech[0.5]["L100"] / mech[1.0]["L100"]
+ratio_lag = abs(1 + 1j * 100 * tau) / abs(1 + 1j * 100 * 0.5 * tau)
+rep.check("high-frequency loop gain at 100 rad/s rises 1.93x for x0.5, matching the plant-lag attenuation ratio |1+jwtau|/|1+jw tau/2| = 1.94",
+          abs(ratio_obs - 1.93) < 0.02 and abs(ratio_obs - ratio_lag) < 0.02, f"{ratio_obs:.3f} vs {ratio_lag:.3f}")
+cm = {s: cliff("D", 0.0, 0.04, tau_true=s * tau, thrust="measured") for s in (0.5, 1.0, 1.5)}
+rep.check("counterfactual with MEASURED thrust: cliffs 7.5 (x0.5), 15.3 (x1), 15.9 ms (x1.5): same asymmetry, so the estimate is not the cause",
+          abs(cm[0.5] - 0.0075) < 2e-4 and abs(cm[1.0] - 0.01526) < 2e-4 and abs(cm[1.5] - 0.01589) < 2e-4
+          and cm[0.5] < cm[1.5])
+rep.check("the on-board thrust estimate WIDENS the nominal delay cliff (24.6 vs 15.3 ms with measured thrust)",
+          0.0246 - cm[1.0] > 0.009)
+
 # ---------------------------------------------------------------- 5. nonlinear spot checks (impl b, constrained QP)
 r = np.array([0.5, 0.0, 1.2, 0.0])
 

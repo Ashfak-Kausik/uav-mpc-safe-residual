@@ -56,9 +56,14 @@ flowchart LR
   X --> S
 ```
 
-**Mismatch model.** Motor lag and delay are dynamic, so the plant is modeled on an augmented state that includes the actuator states. On the Crazyflie the motor is slower than the attitude dynamics, so the identified motor lag is part of the nominal model. The lag mismatch is therefore an error in its time constant, while actuation delay remains a pure mismatch. The mismatch is the one-step prediction error of the nominal model, and a deep ensemble [15] predicts it from a short window of recent inputs.
+**Mismatch model.** Motor lag and delay are dynamic, so the plant is modeled on an augmented state that includes the actuator states. On the Crazyflie the motor is slower than the attitude dynamics, so the identified motor lag is part of the nominal model. The lag mismatch is therefore an error in its time constant, while actuation delay remains a pure mismatch. The mismatch is the one-step prediction error of the nominal model, and a deep ensemble [15] predicts it from a short window of recent states and inputs (past states are needed to form a residual; [notebook 10](notebook/10_loop_gain.md)).
 
-**Reference shaping.** The predicted mismatch is mapped to a saturated reference shift, and the MPC receives a shaped reference. The reference shift does not shorten the plant's chain of integrators. What it changes is that the rotor commands are computed by the constraint-aware MPC, with preview over the horizon, and that the correction reaches the output through the closed loop.
+**Reference shaping.** The MPC tracks a planned trajectory over its horizon, with feedforward computed from the plan's own derivatives ([notebook 08](notebook/08_reference_correction.md)). The predicted mismatch is mapped to a saturated shift of the reference's position and yaw over the horizon. The shift is never differentiated. It does not shorten the plant's chain of integrators. What it changes is that the rotor commands are computed by the constraint-aware MPC, and that the correction reaches the output through the closed loop.
+
+The correct correction is defined as an *oracle*: the regularised least-squares reference shift that best restores tracking under the true mismatch.
+- **Mass and drag:** it equals a steady offset.
+- **Motor-lag error and delay:** it is zero on set-points and nonzero only along moving references.
+- **What can change stability:** a correction that depends only on the plan is feedforward and cannot move a stability limit. A learned correction that depends on the measured state is feedback and can move it, above all through its sensitivity to tilt.
 
 ```math
 \tilde{r}_k = r_k + \alpha_k \, \Delta r_k, \qquad \alpha_k \in [0, \bar{\alpha}_k]
@@ -74,8 +79,8 @@ Here $\alpha_k$ is the trust scale and $\bar{\alpha}_k$ is its upper bound. With
 
 | Bound | Guards against | How it is computed |
 |-------|----------------|--------------------|
-| $r_H$, realizability ratio | Actuator saturation | The largest fraction of the requested correction that the rotors can absorb over the horizon under thrust and rate limits. A ratio test on the inputs the MPC already predicts, $O(Nm)$ divisions, no solver |
-| $\alpha_{\mathrm{sg},k}$, small-gain bound | Loop gain of the correction path | From the small-gain theorem [36], [37]: trust times the certified Lipschitz constant of the correction map [48], [49] times the closed-loop gain must stay below one. The closed-loop gain is computed offline over the mismatch set |
+| $r_H$, realizability ratio | Actuator saturation | The largest fraction of the requested correction that keeps every row of the MPC's problem satisfied: thrust box and rate, plus the soft tilt and altitude rows. A ratio test on the inputs the MPC already predicts, with no solver. It is exact when no constraint is active; otherwise the exact region-exit ratio of the current active set is used ([notebook 09](notebook/09_realizability.md)) |
+| $\alpha_{\mathrm{sg},k}$, small-gain bound | Loop gain of the correction path | From the small-gain theorem [36], [37]: trust times the certified Lipschitz constant of the correction map [48], [49] times the closed-loop gain must stay below one. The closed-loop gain is a certified H∞ norm computed offline over the mismatch set [59]. The generic product is nearly vacuous for a realistic estimator, so the map is a fixed LTI feature filter, certified jointly with the loop, followed by a spectrally normalised network ([notebook 10](notebook/10_loop_gain.md)) |
 | $\alpha_{\mathrm{cbf},k}$, barrier bound | State limits (tilt, altitude) | Discrete-time control barrier condition [44] with a robustness margin, using high-order constructions [45], [11], [12], because tilt and lateral position have relative degree above one |
 
 Only quantities that can be bounded analytically enter the hard layer. Ensemble uncertainty is an estimate, so it is passed to the soft layer as information.
@@ -106,7 +111,7 @@ Here $\psi_k$ is a clipped measure of ensemble variance, $\iota_k$ is the ensemb
 
 Assumption 2 sets the scope: no claim is made beyond the stability boundary of the nominal loop.
 
-**Target Result 1: transmission of the correction.** For the linearized MPC, if no constraint is active and trust is at or below the realizability ratio, no input constraint becomes active and the MPC acts as its unconstrained affine law [35]. The correction is transmitted in full.
+**Target Result 1: transmission of the correction.** If no constraint is active at the current solve and trust is at or below the realizability ratio, no constraint becomes active and the MPC acts as its unconstrained affine law [35]. The correction is transmitted in full. This is proved in notebook 09 for the MPC actually used. That MPC is linear, so the result is exact, not first-order, and the bound is sharp.
 
 **Target Result 2: safety for any soft policy.** For any trust level inside the hard bound:
 - (i) the MPC is feasible. This is trivial, because only input constraints are hard and holding the previous command is always admissible.
@@ -237,6 +242,9 @@ uav-mpc-safe-residual/
     ├── 05_discretization.md
     ├── 06_nominal_mpc.md
     ├── 07_perturbation_models.md
+    ├── 08_reference_correction.md
+    ├── 09_realizability.md
+    ├── 10_loop_gain.md
     ├── decisions.md            dated design decisions and the critical open problems
     ├── 99_audit.md             audit of entries 00 to 04 and of the project documents
     ├── project_details.md      v1 planning document, superseded, kept for history
@@ -279,11 +287,11 @@ tests/         unit and property tests (conservation laws, supervisor invariants
 
 These are tracked here so that they are settled by evidence and not by assumption.
 
-- **Critical, before any realizability or oracle work:** what is the correct reference correction for a mismatch with no steady-state effect, such as a motor-lag error or a delay? A map that cancels the mismatch at steady state has nothing to cancel for them. Notebook 08 must define it ([decisions.md](notebook/decisions.md)).
-- Which mechanism dominates under motor-lag error and delay at the reference injection point: saturation or loop gain? Does the "hurts" regime survive at all, now that the identified lag is in the nominal model? Phase 4 settles this with an oracle correction.
-- In its first version the small-gain bound uses a fixed mismatch set, so it is a constant. How conservative is it, and how much does narrowing the set online recover?
-- The realizability ratio is exact only for the linearized MPC. Its error on aggressive trajectories, and against the exact linear-program answer, needs to be measured.
-- The map from predicted mismatch to reference shift still needs a full derivation (notebook 08).
+- *Resolved in notebook 08:* the correct reference correction for a mismatch with no steady-state effect (motor-lag error, delay). It is the oracle correction along the trajectory, zero on set-points.
+- Which mechanism dominates under motor-lag error and delay at the reference injection point: saturation or loop gain? The linear analysis predicts that on smooth trajectories these mismatches cost only about a millimetre of tracking. A learned correction can then gain little, while its state dependence can cost stability margin. Phase 4 tests this with the oracle on the nonlinear plant.
+- *Measured in notebook 10:* the small-gain bound over a fixed mismatch set. The loop gain is 1.0 nominally and 13.4 at the worst admissible combination, and for linear corrections the bound is only 1.1–2.9× conservative. The generic product with a network Lipschitz constant is nearly vacuous (trust ≤ 0.25 where 4.8 or more is safe); the structured bound allows full trust everywhere tested. Still open: how much narrowing the mismatch set online recovers, and how well the linear bound covers the nonlinear plant.
+- *Measured in notebook 09:* the realizability ratio's error. Against the physical linear-program answer it is within 0.032 and never above it. Against the exact transmission ratio it is exact without active constraints, but over-optimistic in about a quarter of aggressive cases with constraints active. Still open: its on-board cost, and its behaviour on the nonlinear plant with the oracle corrections.
+- How much plan preview the learned correction needs. The oracle recovers 95 % of its benefit with about 0.5 s of preview. A correction computed from past errors alone makes tracking worse.
 - The vehicle's maximum thrust (thrust-to-weight ratio 1.69 from the firmware, against up to about 2.5 in other sources) must be re-identified on a bench, under the flight firmware's thrust configuration, together with the motor time constant. With the firmware's thrust floor, the authority knee sits at a thrust-to-weight ratio of 1.82. Below it, as now, torque authority is limited by the rotor ceiling (84 % of the floor-limited value), so saturation is active more often. The bench test may move the vehicle across the knee.
 - Non-degradation is guaranteed only in expectation over the training distribution. How does the learned policy behave under a shifted distribution?
 
@@ -418,3 +426,5 @@ MD Ashfakul Karim Kausik. Earlier work: [uav-mpc-learning](https://github.com/As
 [57] B. Akbari, J. Frank, and M. Greeff, "Tiny learning-based MPC for multirotors: Solver-aware learning for efficient embedded predictive control," *Mechatronics*, vol. 115, art. no. 103452, 2026. DOI: [10.1016/j.mechatronics.2025.103452](https://doi.org/10.1016/j.mechatronics.2025.103452).
 
 [58] D. Arnström, A. Bemporad, and D. Axehill, "A dual active-set solver for embedded quadratic programming using recursive LDLᵀ updates," *IEEE Trans. Automatic Control*, vol. 67, no. 8, pp. 4362–4369, 2022. DOI: [10.1109/TAC.2022.3176430](https://doi.org/10.1109/TAC.2022.3176430).
+
+[59] S. Boyd, V. Balakrishnan, and P. Kabamba, "A bisection method for computing the $H_\infty$ norm of a transfer matrix and related problems," *Mathematics of Control, Signals, and Systems*, vol. 2, no. 3, pp. 207–219, 1989. DOI: [10.1007/BF02551385](https://doi.org/10.1007/BF02551385).
